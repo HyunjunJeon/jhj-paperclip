@@ -198,6 +198,10 @@ export function agentRoutes(
   const companySkills = companySkillService(db);
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
+  const issuesSvc = issueService(db);
+  const recoveryActionsSvc = issueRecoveryActionService(db);
+  const changeConsentGate = changeConsentGateService(db);
+  const builtInAgents = builtInAgentService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
   async function assertAgentEnvironmentSelection(
@@ -1408,7 +1412,7 @@ export function agentRoutes(
 
     if (decision.reason === "deny_missing_consent" && req.actor.type === "agent" && targetKeys.length > 0) {
       try {
-        await changeConsentGateService(db).assertConsented({
+        await changeConsentGate.assertConsented({
           companyId: targetAgent.companyId,
           actorAgentId: req.actor.agentId,
           actorRunId: req.actor.runId ?? null,
@@ -2117,8 +2121,6 @@ export function agentRoutes(
       return;
     }
 
-    const issuesSvc = issueService(db);
-    const recoveryActionsSvc = issueRecoveryActionService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
       status: "todo,in_progress,blocked",
@@ -2126,7 +2128,7 @@ export function agentRoutes(
       limit: ISSUE_LIST_DEFAULT_LIMIT,
     });
     const worktreeActivation = await resolveWorktreeRunExecutionActivationState({
-      getExperimental: () => instanceSettingsService(db).getExperimental(),
+      getExperimental: () => instanceSettings.getExperimental(),
     });
     const isWorktreeRuntime = isTruthyRuntimeEnvValue(process.env.PAPERCLIP_IN_WORKTREE);
     const eligibleRows = !isWorktreeRuntime
@@ -2167,7 +2169,6 @@ export function agentRoutes(
     }
 
     const query = agentMineInboxQuerySchema.parse(req.query);
-    const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       touchedByUserId: query.userId,
       inboxArchivedByUserId: query.userId,
@@ -2631,7 +2632,7 @@ export function agentRoutes(
       agent.id,
       req.actor.type === "board" ? (req.actor.userId ?? null) : null,
     );
-    await builtInAgentService(db).ensureCompanyDefaultAgentGrants(companyId);
+    await builtInAgents.ensureCompanyDefaultAgentGrants(companyId);
 
     if (agent.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(
@@ -3875,9 +3876,8 @@ export function agentRoutes(
 
   router.get("/issues/:issueId/live-runs", async (req, res) => {
     const rawId = req.params.issueId as string;
-    const issueSvc = issueService(db);
     const identifier = normalizeIssueIdentifier(rawId);
-    const issue = identifier ? await issueSvc.getByIdentifier(identifier) : await issueSvc.getById(rawId);
+    const issue = identifier ? await issuesSvc.getByIdentifier(identifier) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
@@ -3929,9 +3929,8 @@ export function agentRoutes(
 
   router.get("/issues/:issueId/active-run", async (req, res) => {
     const rawId = req.params.issueId as string;
-    const issueSvc = issueService(db);
     const identifier = normalizeIssueIdentifier(rawId);
-    const issue = identifier ? await issueSvc.getByIdentifier(identifier) : await issueSvc.getById(rawId);
+    const issue = identifier ? await issuesSvc.getByIdentifier(identifier) : await issuesSvc.getById(rawId);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;

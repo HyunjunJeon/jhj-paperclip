@@ -3101,7 +3101,7 @@ export function issueRoutes(
       executionPolicy: nextExecutionPolicy,
     })) return;
 
-    const interactions = await issueThreadInteractionService(db).listForIssue(input.existing.id);
+    const interactions = await issueThreadInteractionsSvc.listForIssue(input.existing.id);
     if (interactions.some((interaction) => interaction.status === "pending")) return;
 
     const approvals = await issueApprovalsSvc.listApprovalsForIssue(input.existing.id);
@@ -6040,7 +6040,7 @@ export function issueRoutes(
     }
 
     if (!result.created) {
-      const expiredInteractions = await issueThreadInteractionService(db).expireStaleRequestConfirmationsForIssueDocument(
+      const expiredInteractions = await issueThreadInteractionsSvc.expireStaleRequestConfirmationsForIssueDocument(
         issue,
         {
           id: doc.id,
@@ -6268,7 +6268,7 @@ export function issueRoutes(
         });
       }
 
-      const expiredInteractions = await issueThreadInteractionService(db).expireStaleRequestConfirmationsForIssueDocument(
+      const expiredInteractions = await issueThreadInteractionsSvc.expireStaleRequestConfirmationsForIssueDocument(
         issue,
         {
           id: result.document.id,
@@ -6347,7 +6347,7 @@ export function issueRoutes(
         }),
       },
     });
-    const expiredInteractions = await issueThreadInteractionService(db).expireStaleRequestConfirmationsForIssueDocument(
+    const expiredInteractions = await issueThreadInteractionsSvc.expireStaleRequestConfirmationsForIssueDocument(
       issue,
       {
         id: removed.id,
@@ -8493,7 +8493,7 @@ export function issueRoutes(
         },
       });
 
-      const expiredInteractions = await issueThreadInteractionService(db).expireRequestConfirmationsSupersededByComment(
+      const expiredInteractions = await issueThreadInteractionsSvc.expireRequestConfirmationsSupersededByComment(
         issue,
         comment,
         {
@@ -9091,7 +9091,7 @@ export function issueRoutes(
     assertCompanyAccess(req, issue.companyId);
     if (!(await assertIssueReadAllowed(req, res, issue))) return;
     const actor = getActorInfo(req);
-    const interactionSvc = issueThreadInteractionService(db);
+    const interactionSvc = issueThreadInteractionsSvc;
     const expiredInteractions = await interactionSvc.expireRequestConfirmationsSupersededByHistoricalComments(issue);
     await logExpiredRequestConfirmations({
       issue,
@@ -9123,7 +9123,7 @@ export function issueRoutes(
     const agentSourceRunId = req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
     if (req.actor.type === "agent" && !agentSourceRunId) return;
 
-    const interaction = await issueThreadInteractionService(db).create(issue, {
+    const interaction = await issueThreadInteractionsSvc.create(issue, {
       ...req.body,
       sourceRunId: req.actor.type === "agent" ? agentSourceRunId : req.body.sourceRunId ?? null,
     }, {
@@ -9167,7 +9167,7 @@ export function issueRoutes(
       assertBoard(req);
 
       const actor = getActorInfo(req);
-      const { interaction, createdIssues, continuationIssue } = await issueThreadInteractionService(db).acceptInteraction(issue, interactionId, req.body, {
+      const { interaction, createdIssues, continuationIssue } = await issueThreadInteractionsSvc.acceptInteraction(issue, interactionId, req.body, {
         agentId: actor.agentId,
         userId: actor.actorType === "user" ? actor.actorId : null,
       });
@@ -9275,7 +9275,7 @@ export function issueRoutes(
       assertBoard(req);
 
       const actor = getActorInfo(req);
-      const interaction = await issueThreadInteractionService(db).rejectInteraction(issue, interactionId, req.body, {
+      const interaction = await issueThreadInteractionsSvc.rejectInteraction(issue, interactionId, req.body, {
         agentId: actor.agentId,
         userId: actor.actorType === "user" ? actor.actorId : null,
       });
@@ -9332,7 +9332,7 @@ export function issueRoutes(
       assertBoard(req);
 
       const actor = getActorInfo(req);
-      const interaction = await issueThreadInteractionService(db).answerQuestions(issue, interactionId, req.body, {
+      const interaction = await issueThreadInteractionsSvc.answerQuestions(issue, interactionId, req.body, {
         agentId: actor.agentId,
         userId: actor.actorType === "user" ? actor.actorId : null,
       });
@@ -9385,7 +9385,7 @@ export function issueRoutes(
       assertBoard(req);
 
       const actor = getActorInfo(req);
-      const { interaction, newlyResolvedItemIds } = await issueThreadInteractionService(db).submitItemVerdicts(
+      const { interaction, newlyResolvedItemIds } = await issueThreadInteractionsSvc.submitItemVerdicts(
         issue,
         interactionId,
         req.body,
@@ -9455,7 +9455,7 @@ export function issueRoutes(
       assertBoard(req);
 
       const actor = getActorInfo(req);
-      const interaction = await issueThreadInteractionService(db).cancelQuestions(issue, interactionId, req.body, {
+      const interaction = await issueThreadInteractionsSvc.cancelQuestions(issue, interactionId, req.body, {
         agentId: actor.agentId,
         userId: actor.actorType === "user" ? actor.actorId : null,
       });
@@ -10100,7 +10100,7 @@ export function issueRoutes(
       },
     });
 
-    const expiredInteractions = await issueThreadInteractionService(db).expireRequestConfirmationsSupersededByComment(
+    const expiredInteractions = await issueThreadInteractionsSvc.expireRequestConfirmationsSupersededByComment(
       currentIssue,
       comment,
       {
