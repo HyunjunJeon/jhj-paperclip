@@ -512,6 +512,28 @@ describe.sequential("issue thread interaction routes", () => {
     );
   });
 
+  it("surfaces a durable continuation wake enqueue failure after resolution", async () => {
+    mockHeartbeatService.wakeup.mockRejectedValueOnce(new Error("Wake request persistence failed"));
+    const app = await createApp();
+
+    const res = await request(app)
+      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-2/respond")
+      .send({
+        answers: [{ questionId: "scope", optionIds: ["phase-1"] }],
+      });
+
+    expect(res.status).toBe(500);
+    expect(mockInteractionService.answerQuestions).toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        contextSnapshot: expect.objectContaining({
+          mutation: "interaction",
+        }),
+      }),
+    );
+  });
+
   it("submits item verdicts and emits one continuation wake with resolved item ids", async () => {
     const app = await createApp();
 
@@ -552,6 +574,7 @@ describe.sequential("issue thread interaction routes", () => {
           interactionId: "interaction-verdicts",
           interactionKind: "request_item_verdicts",
           interactionStatus: "pending",
+          mutation: "interaction",
           newlyResolvedItemIds: ["docs"],
           itemVerdicts: {
             newlyResolvedItemIds: ["docs"],

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -1779,7 +1779,7 @@ function buildRequestItemVerdictsWakeIdempotencyKey(args: {
   return `request_item_verdicts:${args.issueId}:${args.interactionId}:${bucket}`;
 }
 
-function queueResolvedInteractionContinuationWakeup(input: {
+async function queueResolvedInteractionContinuationWakeup(input: {
   heartbeat: ReturnType<typeof heartbeatService>;
   issue: { id: string; assigneeAgentId: string | null; status: string };
   interaction: {
@@ -1802,13 +1802,13 @@ function queueResolvedInteractionContinuationWakeup(input: {
   if (
     input.interaction.continuationPolicy !== "wake_assignee"
     && input.interaction.continuationPolicy !== "wake_assignee_on_accept"
-  ) return;
+  ) return null;
   if (
     input.interaction.continuationPolicy === "wake_assignee_on_accept"
     && input.interaction.status !== "accepted"
-  ) return;
-  if (input.interaction.status === "expired") return;
-  if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return;
+  ) return null;
+  if (input.interaction.status === "expired") return null;
+  if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return null;
 
   const forceFreshSession = input.forceFreshSession === true;
   const workspaceRefreshReason = readNonEmptyString(input.workspaceRefreshReason);
@@ -1833,7 +1833,7 @@ function queueResolvedInteractionContinuationWakeup(input: {
           result: interactionResult,
         }
       : null;
-  void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
+  return input.heartbeat.wakeup(input.issue.assigneeAgentId, {
     source: "automation",
     triggerDetail: "system",
     reason: "issue_commented",
@@ -1863,17 +1863,13 @@ function queueResolvedInteractionContinuationWakeup(input: {
       ...(planReviewInteraction ? { planReviewInteraction } : {}),
       ...(checkboxSelection ? { checkboxSelection } : {}),
       ...(itemVerdicts ? { itemVerdicts, newlyResolvedItemIds } : {}),
+      mutation: "interaction",
       wakeReason: "issue_commented",
       source: input.source,
       ...(forceFreshSession ? { forceFreshSession: true } : {}),
       ...(workspaceRefreshReason ? { workspaceRefreshReason } : {}),
     },
-  }).catch((err) => logger.warn({
-    err,
-    issueId: input.issue.id,
-    interactionId: input.interaction.id,
-    agentId: input.issue.assigneeAgentId,
-  }, "failed to wake assignee on issue interaction resolution"));
+  });
 }
 
 function readCheckboxSelectionForWake(input: {
@@ -3494,6 +3490,33 @@ export function issueRoutes(
       });
     }
     return true;
+  }
+
+  function assertWorkProductIssueAuthorizationSnapshot(
+    req: Request,
+    issue: {
+      status: string;
+      assigneeAgentId: string | null;
+      checkoutRunId: string | null;
+    },
+    locked: {
+      issueStatus: string;
+      assigneeAgentId: string | null;
+      checkoutRunId: string | null;
+    },
+  ) {
+    if (req.actor.type !== "agent") return;
+    const expectedCheckoutRunId =
+      issue.status === "in_progress" && issue.assigneeAgentId === req.actor.agentId
+        ? (req.actor.runId?.trim() ?? issue.checkoutRunId)
+        : issue.checkoutRunId;
+    if (
+      locked.issueStatus !== issue.status ||
+      locked.assigneeAgentId !== issue.assigneeAgentId ||
+      locked.checkoutRunId !== expectedCheckoutRunId
+    ) {
+      throw conflict("Issue assignment or checkout changed; retry the work product mutation");
+    }
   }
 
   async function assertFreshTaskWatchdogSourceMutation(
@@ -6365,6 +6388,17 @@ export function issueRoutes(
     assertCompanyAccess(req, issue.companyId);
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return;
+    if (req.actor.type === "agent" && isClosedIssueStatus(issue.status)) {
+      throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+    }
+    if (
+      req.body.reviewState === "approved" ||
+      req.body.reviewState === "changes_requested" ||
+      req.body.status === "approved" ||
+      req.body.status === "changes_requested"
+    ) {
+      assertBoard(req);
+    }
     const actor = getActorInfo(req);
     const createInput = {
       ...req.body,
@@ -6380,7 +6414,30 @@ export function issueRoutes(
         metadata: req.body.metadata ?? null,
       });
     }
-    const product = await workProductsSvc.createForIssue(issue.id, issue.companyId, createInput);
+    const product = await workProductsSvc.createForIssue(
+      issue.id,
+      issue.companyId,
+      createInput,
+      ({ issueStatus, assigneeAgentId, checkoutRunId, implicitlyUpdated }) => {
+        if (req.actor.type === "agent" && isClosedIssueStatus(issueStatus)) {
+          throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+        }
+        assertWorkProductIssueAuthorizationSnapshot(req, issue, {
+          issueStatus,
+          assigneeAgentId,
+          checkoutRunId,
+        });
+        if (implicitlyUpdated.some((product) =>
+          product.reviewState === "approved" ||
+          product.reviewState === "changes_requested" ||
+          product.status === "approved" ||
+          product.status === "changes_requested" ||
+          product.sourceTrust?.disposition === "promoted"
+        )) {
+          assertBoard(req);
+        }
+      },
+    );
     if (!product) {
       res.status(422).json({ error: "Invalid work product payload" });
       return;
@@ -6416,11 +6473,8 @@ export function issueRoutes(
     if (!(await assertIssueReadAllowed(req, res, issue))) return;
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return;
+    assertBoard(req);
     const actor = getActorInfo(req);
-    if (await sourceTrustForActorWrite(issue, actor)) {
-      res.status(403).json({ error: "Low-trust actors cannot promote quarantined output" });
-      return;
-    }
     const sourceTrust = await lookupLowTrustSourceArtifact({
       issueId: issue.id,
       artifactKind: req.body.sourceArtifactKind,
@@ -6445,50 +6499,80 @@ export function issueRoutes(
       promotedAt,
     });
     const product = await db.transaction(async (tx) => {
-      const markPromoted = { sourceTrust: promotionTrust, updatedAt: promotedAt };
-      const updatedSource = await (async () => {
+      const lockedIssue = await tx
+        .select({ id: issueRows.id })
+        .from(issueRows)
+        .where(and(
+          eq(issueRows.id, issue.id),
+          eq(issueRows.companyId, issue.companyId),
+        ))
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!lockedIssue) return null;
+      const lockedSourceTrust = await (async () => {
         if (req.body.sourceArtifactKind === "issue") {
           return tx
-            .update(issueRows)
-            .set(markPromoted)
+            .select({ sourceTrust: issueRows.sourceTrust })
+            .from(issueRows)
             .where(and(
               eq(issueRows.id, req.body.sourceArtifactId),
-              eq(issueRows.sourceTrust, sourceTrust),
+              eq(issueRows.companyId, issue.companyId),
             ))
-            .returning({ id: issueRows.id });
+            .for("update")
+            .then((rows) => rows[0]?.sourceTrust ?? null);
         }
         if (req.body.sourceArtifactKind === "comment") {
           return tx
-            .update(issueComments)
-            .set(markPromoted)
+            .select({ sourceTrust: issueComments.sourceTrust })
+            .from(issueComments)
             .where(and(
               eq(issueComments.id, req.body.sourceArtifactId),
               eq(issueComments.issueId, issue.id),
-              eq(issueComments.sourceTrust, sourceTrust),
             ))
-            .returning({ id: issueComments.id });
+            .for("update")
+            .then((rows) => rows[0]?.sourceTrust ?? null);
         }
         if (req.body.sourceArtifactKind === "document") {
           return tx
-            .update(documents)
-            .set(markPromoted)
+            .select({ sourceTrust: documents.sourceTrust })
+            .from(issueDocuments)
+            .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
             .where(and(
               eq(documents.id, req.body.sourceArtifactId),
-              eq(documents.sourceTrust, sourceTrust),
+              eq(issueDocuments.issueId, issue.id),
             ))
-            .returning({ id: documents.id });
+            .for("update")
+            .then((rows) => rows[0]?.sourceTrust ?? null);
         }
         return tx
-          .update(issueWorkProducts)
-          .set(markPromoted)
+          .select({ sourceTrust: issueWorkProducts.sourceTrust })
+          .from(issueWorkProducts)
           .where(and(
             eq(issueWorkProducts.id, req.body.sourceArtifactId),
             eq(issueWorkProducts.issueId, issue.id),
-            eq(issueWorkProducts.sourceTrust, sourceTrust),
           ))
-          .returning({ id: issueWorkProducts.id });
+          .for("update")
+          .then((rows) => rows[0]?.sourceTrust ?? null);
       })();
-      if (!updatedSource[0]) return null;
+      if (!isLowTrustQuarantined(lockedSourceTrust)) return null;
+
+      const existingPromotion = await tx
+        .select({ id: issueWorkProducts.id })
+        .from(issueWorkProducts)
+        .where(and(
+          eq(issueWorkProducts.companyId, issue.companyId),
+          eq(issueWorkProducts.issueId, issue.id),
+          eq(issueWorkProducts.type, "artifact"),
+          eq(issueWorkProducts.provider, "paperclip"),
+          eq(issueWorkProducts.externalId, req.body.sourceArtifactId),
+          sql`${issueWorkProducts.metadata}->'promotion'->>'sourceArtifactKind' = ${req.body.sourceArtifactKind}`,
+          sql`${issueWorkProducts.metadata}->'promotion'->>'sourceArtifactId' = ${req.body.sourceArtifactId}`,
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (existingPromotion) {
+        throw conflict("Low-trust source artifact has already been promoted");
+      }
 
       return tx
         .insert(issueWorkProducts)
@@ -6565,6 +6649,22 @@ export function issueRoutes(
     }
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return;
+    if (req.actor.type === "agent" && isClosedIssueStatus(issue.status)) {
+      throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+    }
+    if (
+      existing.reviewState === "approved" ||
+      existing.reviewState === "changes_requested" ||
+      existing.status === "approved" ||
+      existing.status === "changes_requested" ||
+      existing.sourceTrust?.disposition === "promoted" ||
+      req.body.reviewState === "approved" ||
+      req.body.reviewState === "changes_requested" ||
+      req.body.status === "approved" ||
+      req.body.status === "changes_requested"
+    ) {
+      assertBoard(req);
+    }
     const actor = getActorInfo(req);
     const patch = { ...req.body };
     const createdByRunId = await resolveWorkProductCreatedByRunId(req, res, existing.companyId, req.body, "update");
@@ -6582,10 +6682,43 @@ export function issueRoutes(
       }
     }
     const sourceTrust = await sourceTrustForActorWrite(issue, actor);
-    const product = await workProductsSvc.update(id, {
-      ...patch,
-      ...(sourceTrust ? { sourceTrust } : {}),
-    });
+    const product = await workProductsSvc.update(
+      id,
+      {
+        ...patch,
+        ...(sourceTrust ? { sourceTrust } : {}),
+      },
+      ({ issueStatus, assigneeAgentId, checkoutRunId, existing: lockedExisting, implicitlyUpdated }) => {
+        if (req.actor.type === "agent" && isClosedIssueStatus(issueStatus)) {
+          throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+        }
+        assertWorkProductIssueAuthorizationSnapshot(req, issue, {
+          issueStatus,
+          assigneeAgentId,
+          checkoutRunId,
+        });
+        if (
+          lockedExisting?.reviewState === "approved" ||
+          lockedExisting?.reviewState === "changes_requested" ||
+          lockedExisting?.status === "approved" ||
+          lockedExisting?.status === "changes_requested" ||
+          lockedExisting?.sourceTrust?.disposition === "promoted" ||
+          req.body.reviewState === "approved" ||
+          req.body.reviewState === "changes_requested" ||
+          req.body.status === "approved" ||
+          req.body.status === "changes_requested" ||
+          implicitlyUpdated.some((product) =>
+            product.reviewState === "approved" ||
+            product.reviewState === "changes_requested" ||
+            product.status === "approved" ||
+            product.status === "changes_requested" ||
+            product.sourceTrust?.disposition === "promoted"
+          )
+        ) {
+          assertBoard(req);
+        }
+      },
+    );
     if (!product) {
       res.status(404).json({ error: "Work product not found" });
       return;
@@ -6625,7 +6758,40 @@ export function issueRoutes(
     }
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!(await assertDeliverableMutationAllowedByRunContext(req, res, issue))) return;
-    const removed = await workProductsSvc.remove(id);
+    if (req.actor.type === "agent" && isClosedIssueStatus(issue.status)) {
+      throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+    }
+    if (
+      existing.reviewState === "approved" ||
+      existing.reviewState === "changes_requested" ||
+      existing.status === "approved" ||
+      existing.status === "changes_requested" ||
+      existing.sourceTrust?.disposition === "promoted"
+    ) {
+      assertBoard(req);
+    }
+    const removed = await workProductsSvc.remove(
+      id,
+      ({ issueStatus, assigneeAgentId, checkoutRunId, existing: lockedExisting }) => {
+        if (req.actor.type === "agent" && isClosedIssueStatus(issueStatus)) {
+          throw forbidden("Agents cannot mutate work products on done or cancelled issues");
+        }
+        assertWorkProductIssueAuthorizationSnapshot(req, issue, {
+          issueStatus,
+          assigneeAgentId,
+          checkoutRunId,
+        });
+        if (
+          lockedExisting?.reviewState === "approved" ||
+          lockedExisting?.reviewState === "changes_requested" ||
+          lockedExisting?.status === "approved" ||
+          lockedExisting?.status === "changes_requested" ||
+          lockedExisting?.sourceTrust?.disposition === "promoted"
+        ) {
+          assertBoard(req);
+        }
+      },
+    );
     if (!removed) {
       res.status(404).json({ error: "Work product not found" });
       return;
@@ -9082,7 +9248,7 @@ export function issueRoutes(
         interaction.status === "accepted" &&
         acceptedPlanTarget?.issueId === issue.id &&
         acceptedPlanTarget.key === "plan";
-      queueResolvedInteractionContinuationWakeup({
+      await queueResolvedInteractionContinuationWakeup({
         heartbeat,
         issue: continuationWakeIssue,
         interaction,
@@ -9141,7 +9307,7 @@ export function issueRoutes(
         },
       });
 
-      queueResolvedInteractionContinuationWakeup({
+      await queueResolvedInteractionContinuationWakeup({
         heartbeat,
         issue,
         interaction,
@@ -9194,7 +9360,7 @@ export function issueRoutes(
         },
       });
 
-      queueResolvedInteractionContinuationWakeup({
+      await queueResolvedInteractionContinuationWakeup({
         heartbeat,
         issue,
         interaction,
@@ -9258,7 +9424,7 @@ export function issueRoutes(
       });
 
       if (newlyResolvedItemIds.length > 0) {
-        queueResolvedInteractionContinuationWakeup({
+        await queueResolvedInteractionContinuationWakeup({
           heartbeat,
           issue,
           interaction,
@@ -9317,7 +9483,7 @@ export function issueRoutes(
         },
       });
 
-      queueResolvedInteractionContinuationWakeup({
+      await queueResolvedInteractionContinuationWakeup({
         heartbeat,
         issue,
         interaction,

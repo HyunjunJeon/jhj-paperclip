@@ -1206,7 +1206,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
       id: issueId,
       companyId,
     }, created.id, {
-      verdicts: [{ id: "docs", verdict: "reject" }],
+      verdicts: [{ id: "docs", verdict: "reject", reason: "  Missing examples  " }],
     }, {
       userId: "local-board",
     });
@@ -1224,6 +1224,39 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           },
         ],
       },
+    });
+    await expect(interactionsSvc.submitItemVerdicts({
+      id: issueId,
+      companyId,
+    }, created.id, {
+      verdicts: [{ id: "docs", verdict: "reject" }],
+    }, {
+      userId: "local-board",
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("A reason is required"),
+    });
+    await expect(interactionsSvc.submitItemVerdicts({
+      id: issueId,
+      companyId,
+    }, created.id, {
+      verdicts: [{ id: "docs", verdict: "approve" }],
+    }, {
+      userId: "local-board",
+    })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already been decided"),
+    });
+    await expect(interactionsSvc.submitItemVerdicts({
+      id: issueId,
+      companyId,
+    }, created.id, {
+      verdicts: [{ id: "docs", verdict: "reject", reason: "Different rationale" }],
+    }, {
+      userId: "local-board",
+    })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already been decided"),
     });
 
     const completed = await interactionsSvc.submitItemVerdicts({
@@ -1265,6 +1298,17 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     });
     expect(duplicateAfterComplete.newlyResolvedItemIds).toEqual([]);
     expect(duplicateAfterComplete.interaction.status).toBe("answered");
+    await expect(interactionsSvc.submitItemVerdicts({
+      id: issueId,
+      companyId,
+    }, created.id, {
+      verdicts: [{ id: "api", verdict: "reject", reason: "The API contract changed" }],
+    }, {
+      userId: "local-board",
+    })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already been decided"),
+    });
   });
 
   it("enforces request_item_verdicts ids, enabled verdicts, and required reasons", async () => {

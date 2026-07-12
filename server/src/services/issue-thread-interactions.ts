@@ -615,9 +615,6 @@ function resolveRequestItemVerdictSubmissions(args: {
     if (!payloadItemIds.has(submitted.id)) {
       throw unprocessable(`Unknown item verdict id: ${submitted.id}`);
     }
-    if (existingById.has(submitted.id)) {
-      continue;
-    }
     if (!enabledVerdicts.has(submitted.verdict)) {
       throw unprocessable(`Verdict ${submitted.verdict} is not enabled for this item verdict request`);
     }
@@ -625,6 +622,15 @@ function resolveRequestItemVerdictSubmissions(args: {
     const reason = submitted.reason?.trim() ?? "";
     if (requireReasonOn.has(submitted.verdict) && reason.length === 0) {
       throw unprocessable(`A reason is required when verdict is ${submitted.verdict}`);
+    }
+
+    const existing = existingById.get(submitted.id);
+    if (existing) {
+      const existingReason = existing.reason?.trim() ?? "";
+      if (existing.verdict !== submitted.verdict || existingReason !== reason) {
+        throw conflict(`Item verdict ${submitted.id} has already been decided with a different verdict or reason`);
+      }
+      continue;
     }
 
     if (newlyResolvedById.has(submitted.id)) {
@@ -1450,15 +1456,14 @@ export function issueThreadInteractionService(db: Db) {
         const interaction = hydrateInteraction(current) as RequestItemVerdictsInteraction;
         if (current.status !== "pending") {
           if (current.status === "answered") {
-            const resolvedIds = new Set(interaction.result?.items.map((item) => item.id) ?? []);
-            const payloadIds = new Set(interaction.payload.items.map((item) => item.id));
-            for (const submitted of data.verdicts) {
-              if (!payloadIds.has(submitted.id)) {
-                throw unprocessable(`Unknown item verdict id: ${submitted.id}`);
-              }
-              if (!resolvedIds.has(submitted.id)) {
-                throw conflict("Interaction has already been resolved");
-              }
+            const { newlyResolvedItemIds } = resolveRequestItemVerdictSubmissions({
+              interaction,
+              input: data,
+              actor,
+              now: new Date(),
+            });
+            if (newlyResolvedItemIds.length > 0) {
+              throw conflict("Interaction has already been resolved");
             }
             return { interaction, newlyResolvedItemIds: [], resolved: false };
           }

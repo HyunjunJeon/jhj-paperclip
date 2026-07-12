@@ -976,12 +976,307 @@ describe("agent issue mutation checkout ownership", () => {
       type: "artifact",
       provider: "test",
       title: "Artifact",
+      reviewState: "needs_board_review",
     }).expect(201);
 
     expect(mockWorkProductService.createForIssue).toHaveBeenCalledWith(
       issueId,
       companyId,
-      expect.objectContaining({ createdByRunId: ownerRunId }),
+      expect.objectContaining({
+        createdByRunId: ownerRunId,
+        reviewState: "needs_board_review",
+      }),
+      expect.any(Function),
+    );
+  });
+  it.each([
+    [
+      "create with approved review state",
+      (app: express.Express) =>
+        request(app).post(`/api/issues/${issueId}/work-products`).send({
+          type: "artifact",
+          provider: "test",
+          title: "Artifact",
+          reviewState: "approved",
+        }),
+    ],
+    [
+      "create with changes-requested status",
+      (app: express.Express) =>
+        request(app).post(`/api/issues/${issueId}/work-products`).send({
+          type: "artifact",
+          provider: "test",
+          title: "Artifact",
+          status: "changes_requested",
+        }),
+    ],
+    [
+      "update with changes-requested review state",
+      (app: express.Express) =>
+        request(app).patch("/api/work-products/product-1").send({ reviewState: "changes_requested" }),
+    ],
+    [
+      "update with approved status",
+      (app: express.Express) =>
+        request(app).patch("/api/work-products/product-1").send({ status: "approved" }),
+    ],
+  ])("rejects agent work-product self-approval through %s", async (_operation, sendRequest) => {
+    const res = await sendRequest(await createApp(ownerActor()));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Board access required");
+    expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
+    expect(mockWorkProductService.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "update approved evidence",
+      { reviewState: "approved", status: "active", sourceTrust: null },
+      (app: express.Express) => request(app).patch("/api/work-products/product-1").send({ title: "Rewritten" }),
+    ],
+    [
+      "delete approved evidence",
+      { reviewState: "approved", status: "active", sourceTrust: null },
+      (app: express.Express) => request(app).delete("/api/work-products/product-1"),
+    ],
+    [
+      "update promoted evidence",
+      {
+        reviewState: "approved",
+        status: "approved",
+        sourceTrust: { preset: "low_trust_review", disposition: "promoted" },
+      },
+      (app: express.Express) => request(app).patch("/api/work-products/product-1").send({ title: "Rewritten" }),
+    ],
+  ])("rejects agent attempts to %s", async (_operation, protectedState, sendRequest) => {
+    mockWorkProductService.getById.mockResolvedValue({
+      id: "product-1",
+      issueId,
+      companyId,
+      type: "artifact",
+      ...protectedState,
+    });
+
+    const res = await sendRequest(await createApp(ownerActor()));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Board access required");
+    expect(mockWorkProductService.update).not.toHaveBeenCalled();
+    expect(mockWorkProductService.remove).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "create",
+      "done",
+      (app: express.Express) =>
+        request(app).post(`/api/issues/${issueId}/work-products`).send({
+          type: "artifact",
+          provider: "test",
+          title: "Artifact",
+        }),
+    ],
+    [
+      "update",
+      "cancelled",
+      (app: express.Express) => request(app).patch("/api/work-products/product-1").send({ title: "Blocked" }),
+    ],
+    [
+      "delete",
+      "done",
+      (app: express.Express) => request(app).delete("/api/work-products/product-1"),
+    ],
+  ])("rejects agent work-product %s on %s issues", async (_operation, status, sendRequest) => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status }));
+
+    const res = await sendRequest(await createApp(ownerActor()));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Agents cannot mutate work products on done or cancelled issues");
+    expect(mockWorkProductService.createForIssue).not.toHaveBeenCalled();
+    expect(mockWorkProductService.update).not.toHaveBeenCalled();
+    expect(mockWorkProductService.remove).not.toHaveBeenCalled();
+  });
+
+  it("rejects an agent create when the issue becomes terminal inside the mutation transaction", async () => {
+    mockWorkProductService.createForIssue.mockImplementation(
+      async (
+        _issueId: string,
+        _companyId: string,
+        _data: unknown,
+        authorize: (context: {
+          issueStatus: string;
+          existing: null;
+          implicitlyUpdated: Record<string, unknown>[];
+        }) => void,
+      ) => {
+        authorize({ issueStatus: "done", existing: null, implicitlyUpdated: [] });
+        return null;
+      },
+    );
+
+    const res = await request(await createApp(ownerActor()))
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({
+        type: "artifact",
+        provider: "test",
+        title: "Artifact",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Agents cannot mutate work products on done or cancelled issues");
+  });
+
+  it("rejects an agent primary replacement that would demote protected evidence", async () => {
+    mockWorkProductService.createForIssue.mockImplementation(
+      async (
+        _issueId: string,
+        _companyId: string,
+        _data: unknown,
+        authorize: (context: {
+          issueStatus: string;
+          assigneeAgentId: string | null;
+          checkoutRunId: string | null;
+          existing: null;
+          implicitlyUpdated: Record<string, unknown>[];
+        }) => void,
+      ) => {
+        authorize({
+          issueStatus: "in_progress",
+          assigneeAgentId: ownerAgentId,
+          checkoutRunId: ownerRunId,
+          existing: null,
+          implicitlyUpdated: [{
+            id: "approved-primary",
+            issueId,
+            companyId,
+            type: "artifact",
+            status: "approved",
+            reviewState: "approved",
+            isPrimary: true,
+            sourceTrust: null,
+          }],
+        });
+        return null;
+      },
+    );
+
+    const res = await request(await createApp(ownerActor()))
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({
+        type: "artifact",
+        provider: "test",
+        title: "Replacement",
+        isPrimary: true,
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Board access required");
+  });
+
+  it("rejects an agent mutation when assignment changes inside the transaction", async () => {
+    mockWorkProductService.createForIssue.mockImplementation(
+      async (
+        _issueId: string,
+        _companyId: string,
+        _data: unknown,
+        authorize: (context: {
+          issueStatus: string;
+          assigneeAgentId: string | null;
+          checkoutRunId: string | null;
+          existing: null;
+          implicitlyUpdated: Record<string, unknown>[];
+        }) => void,
+      ) => {
+        authorize({
+          issueStatus: "in_progress",
+          assigneeAgentId: peerAgentId,
+          checkoutRunId: "66666666-6666-4666-8666-666666666666",
+          existing: null,
+          implicitlyUpdated: [],
+        });
+        return null;
+      },
+    );
+
+    const res = await request(await createApp(ownerActor()))
+      .post(`/api/issues/${issueId}/work-products`)
+      .send({
+        type: "artifact",
+        provider: "test",
+        title: "Stale owner write",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.error).toBe("Issue assignment or checkout changed; retry the work product mutation");
+  });
+
+  it("rejects an agent update when evidence becomes protected inside the mutation transaction", async () => {
+    mockWorkProductService.update.mockImplementation(
+      async (
+        _id: string,
+        _patch: unknown,
+        authorize: (context: {
+          issueStatus: string;
+          assigneeAgentId: string | null;
+          checkoutRunId: string | null;
+          existing: Record<string, unknown>;
+          implicitlyUpdated: Record<string, unknown>[];
+        }) => void,
+      ) => {
+        authorize({
+          issueStatus: "in_progress",
+          assigneeAgentId: ownerAgentId,
+          checkoutRunId: ownerRunId,
+          existing: {
+            id: "product-1",
+            issueId,
+            companyId,
+            type: "artifact",
+            status: "active",
+            reviewState: "approved",
+            sourceTrust: null,
+          },
+          implicitlyUpdated: [],
+        });
+        return null;
+      },
+    );
+
+    const res = await request(await createApp(ownerActor()))
+      .patch("/api/work-products/product-1")
+      .send({ title: "Rewritten" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Board access required");
+  });
+
+  it("allows board correction of a terminal work product and records the activity", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "done" }));
+
+    const res = await request(await createApp(boardActor()))
+      .patch("/api/work-products/product-1")
+      .send({ reviewState: "approved" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockWorkProductService.update).toHaveBeenCalledWith(
+      "product-1",
+      { reviewState: "approved" },
+      expect.any(Function),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "user",
+        action: "issue.work_product_updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: expect.objectContaining({
+          workProductId: "product-1",
+          changedKeys: ["reviewState"],
+        }),
+      }),
     );
   });
 
@@ -1435,7 +1730,11 @@ describe("agent issue mutation checkout ownership", () => {
       expect.any(Object),
     );
     expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalled();
-    expect(mockWorkProductService.update).toHaveBeenCalledWith("product-1", { title: "Updated product" });
+    expect(mockWorkProductService.update).toHaveBeenCalledWith(
+      "product-1",
+      { title: "Updated product" },
+      expect.any(Function),
+    );
   });
 
   it("preserves board mutations on active checkouts", async () => {

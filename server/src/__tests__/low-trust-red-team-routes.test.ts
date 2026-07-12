@@ -1341,6 +1341,16 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
         sourceAgentId: fixture.agents.lowTrust.id,
       },
     }).returning();
+    const agentPromotion = await request(createApp(db, agentActor(fixture)))
+      .post(`/api/issues/${fixture.issues.assignedReview.id}/low-trust/promotions`)
+      .send({
+        sourceArtifactKind: "work_product",
+        sourceArtifactId: randomUUID(),
+        title: "Unauthorized promotion",
+        summary: "An agent must not promote low-trust output.",
+      });
+    expect(agentPromotion.status, JSON.stringify(agentPromotion.body)).toBe(403);
+    expect(agentPromotion.body.error).toBe("Board access required");
 
     const [otherCompany] = await db.insert(companies).values({
       name: "Foreign low-trust source",
@@ -1373,15 +1383,28 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
     expect(rejectedPromotion.status, JSON.stringify(rejectedPromotion.body)).toBe(404);
     expect(rejectedPromotion.body.error).toBe("Low-trust source artifact not found");
 
-    const promotion = await request(app)
-      .post(`/api/issues/${fixture.issues.assignedReview.id}/low-trust/promotions`)
-      .send({
-        sourceArtifactKind: "work_product",
-        sourceArtifactId: rawProduct!.id,
-        title: "Sanitized finding",
-        summary: "Sanitized summary without raw instructions.",
-      });
-    expect(promotion.status, JSON.stringify(promotion.body)).toBe(201);
+    const promotionAttempts = await Promise.all([
+      request(app)
+        .post(`/api/issues/${fixture.issues.assignedReview.id}/low-trust/promotions`)
+        .send({
+          sourceArtifactKind: "work_product",
+          sourceArtifactId: rawProduct!.id,
+          title: "Sanitized finding",
+          summary: "Sanitized summary without raw instructions.",
+        }),
+      request(app)
+        .post(`/api/issues/${fixture.issues.assignedReview.id}/low-trust/promotions`)
+        .send({
+          sourceArtifactKind: "work_product",
+          sourceArtifactId: rawProduct!.id,
+          title: "Duplicate sanitized finding",
+          summary: "Should not create another promoted artifact.",
+        }),
+    ]);
+    expect(promotionAttempts.map((attempt) => attempt.status).sort()).toEqual([201, 409]);
+    const promotion = promotionAttempts.find((attempt) => attempt.status === 201)!;
+    const duplicatePromotion = promotionAttempts.find((attempt) => attempt.status === 409)!;
+    expect(duplicatePromotion.body.error).toBe("Low-trust source artifact has already been promoted");
     expect(promotion.body.sourceTrust).toMatchObject({
       preset: LOW_TRUST_REVIEW_PRESET,
       disposition: "promoted",
@@ -1407,32 +1430,19 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
     expect(typeof promotion.body.sourceTrust.promotedAt).toBe("string");
     expectNoCanary(promotion.body, fixture.canaries.raw);
 
-    const [promotedSource] = await db
+    const [rawSource] = await db
       .select({ sourceTrust: issueWorkProducts.sourceTrust })
       .from(issueWorkProducts)
       .where(eq(issueWorkProducts.id, rawProduct!.id));
-    expect(promotedSource?.sourceTrust).toMatchObject({
+    expect(rawSource?.sourceTrust).toMatchObject({
       preset: LOW_TRUST_REVIEW_PRESET,
-      disposition: "promoted",
-      promotedFrom: {
-        artifactKind: "work_product",
-        artifactId: rawProduct!.id,
-        issueId: fixture.issues.assignedReview.id,
-      },
-      promotedByActorType: "user",
-      promotedByActorId: "board-user",
+      disposition: "quarantined",
+      sourceIssueId: fixture.issues.assignedReview.id,
+      sourceRunId: fixture.runs.lowTrust.id,
+      sourceAgentId: fixture.agents.lowTrust.id,
     });
+    expect(rawSource?.sourceTrust).toEqual(rawProduct!.sourceTrust);
 
-    const duplicatePromotion = await request(app)
-      .post(`/api/issues/${fixture.issues.assignedReview.id}/low-trust/promotions`)
-      .send({
-        sourceArtifactKind: "work_product",
-        sourceArtifactId: rawProduct!.id,
-        title: "Duplicate sanitized finding",
-        summary: "Should not create another promoted artifact.",
-      });
-    expect(duplicatePromotion.status, JSON.stringify(duplicatePromotion.body)).toBe(422);
-    expect(duplicatePromotion.body.error).toBe("Source artifact is not quarantined low-trust output");
 
     const productsForSource = await db
       .select({ id: issueWorkProducts.id })
