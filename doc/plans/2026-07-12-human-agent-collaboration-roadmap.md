@@ -219,25 +219,25 @@ Review risk level for the program as written **before** these constraints: **Hig
 
 Product + eng must answer in writing (issue or ADR):
 
-1. **Handoff source of truth:** replace / include / satisfy successful-run-handoff—how does attention dedup work?  
-2. **UI option → API map** for accept / reject / request changes (side effects + continuationPolicy).  
-3. **Handoff required vs optional** when entering human-owned wait (server force vs skill recommend).  
-4. **Watchdog:** handoff or `humanOnly` permanently human-reserved? (expected: yes)  
-5. **Timeout actor matrix** and issue-scoped alert / escalation / `blocked` / recovery mappings.
-6. **Contract storage + evaluation order** relative to executionPolicy (one line each).  
-7. **Flag scope:** instance experimental only vs company settings schema work in Stage 0.  
-8. **Steer permissions:** board-only first? membership roles? interrupt vs non-interrupt?  
-9. **First GA one-sentence promise** (pick exactly one primary; the other shipped capabilities are secondary):
+1. **Handoff source of truth:** replace / include / satisfy successful-run-handoff—how does attention dedup work? → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q1--handoff-source-of-truth)  
+2. **UI option → API map** for accept / reject / request changes (side effects + continuationPolicy). → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q2--ui-option-to-api-map)  
+3. **Handoff required vs optional** when entering human-owned wait (server force vs skill recommend). → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q3--handoff-required-vs-optional)  
+4. **Watchdog:** handoff or `humanOnly` permanently human-reserved? (expected: yes) → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q4--watchdog-human-reservation)  
+5. **Timeout actor matrix** and issue-scoped alert / escalation / `blocked` / recovery mappings. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q5--timeout-actor-matrix)
+6. **Contract storage + evaluation order** relative to executionPolicy (one line each). → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q6--contract-storage-and-evaluation-order)  
+7. **Flag scope:** instance experimental only vs company settings schema work in Stage 0. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q7--flag-scope)  
+8. **Steer permissions:** board-only first? membership roles? interrupt vs non-interrupt? → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q8--steer-permissions)  
+9. **First GA one-sentence promise** (pick exactly one primary; the other shipped capabilities are secondary): → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q9--first-ga-one-sentence-promise)
    - “WhatNeedsMe shows a decision package.”
    - “Optional contracts block done without required artifacts.”
    - “Board can store-first steer without dual ownership.”
-10. **CLI / skill / OpenAPI** update policy when agents gain new fields.
-11. **Decision resolver authority:** board-any vs responsible user vs typed execution participant; non-owner behavior and escalation.
-12. **Failure-atomic resolve:** transaction/outbox contract for decision + activity + continuation wake or explicit recovery.
-13. **Decision queue bounds:** idempotency source, pending-per-issue/company caps, supersession, payload limits, and attention pagination.
-14. **Outcome authority:** immutable checklist revision, evaluator/evidence model, edit rights, artifact qualification/pinning, and force-complete fencing.
-15. **Steer delivery:** canonical comment storage, posting permission, sequence/idempotency, lease/ack/retry, reassignment, and active-run behavior.
-16. **Command composer:** company/goal linkage, draft vs assigned execution, budget-gated wake, idempotency, and audit.
+10. **CLI / skill / OpenAPI** update policy when agents gain new fields. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q10--cli-skill-and-openapi-policy)
+11. **Decision resolver authority:** board-any vs responsible user vs typed execution participant; non-owner behavior and escalation. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q11--decision-resolver-authority)
+12. **Failure-atomic resolve:** transaction/outbox contract for decision + activity + continuation wake or explicit recovery. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q12--failure-atomic-resolve)
+13. **Decision queue bounds:** idempotency source, pending-per-issue/company caps, supersession, payload limits, and attention pagination. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q13--decision-queue-bounds)
+14. **Outcome authority:** immutable checklist revision, evaluator/evidence model, edit rights, artifact qualification/pinning, and force-complete fencing. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q14--outcome-authority)
+15. **Steer delivery:** canonical comment storage, posting permission, sequence/idempotency, lease/ack/retry, reassignment, and active-run behavior. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q15--steer-delivery)
+16. **Command composer:** company/goal linkage, draft vs assigned execution, budget-gated wake, idempotency, and audit. → proposed: [decisions doc](2026-07-13-collab-pre-code-decisions.md#q16--command-composer)
 
 ---
 
