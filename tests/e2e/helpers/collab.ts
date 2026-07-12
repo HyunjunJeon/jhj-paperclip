@@ -115,6 +115,8 @@ export interface AttentionItemLite {
   companyId: string;
   sourceKind: string;
   subject: { kind: string; id: string; companyId: string } & Record<string, unknown>;
+  inlineResolvable: boolean;
+  entryRule: string;
   dedupKey: string;
   dismissalKey: string;
   severity: string;
@@ -328,6 +330,59 @@ export async function getIssueRunLockState(
 }
 
 /**
+ * New — sanctioned way to get a run id for an issue-scoped agent call (any request that needs
+ * an `X-Paperclip-Run-Id` header, e.g. POST /interactions or PATCH /issues/:id).
+ *
+ * Exists because creating an issue with a non-backlog status and an assignee fires a real
+ * (fire-and-forget) assignment wakeup for the assignee agent
+ * (server/src/services/issue-assignment-wakeup.ts, queued from server/src/routes/issues.ts:7244),
+ * which races to check the issue out via its own process-adapter run. Two failure modes follow
+ * from that race: a plain `invokeHeartbeat` can throw its skipped-heartbeat error when the agent
+ * already has an active run (the background wakeup run), and a freshly minted run id can still
+ * lose to that background run's checkout because its completion is finalized asynchronously.
+ *
+ * Strategy is current-lock-first: if `opts.issueId` is given, read the issue's run lock and — if
+ * it is currently held by a run (`checkoutRunId ?? executionRunId`) — return that run id
+ * directly, since that's the run a mutating request must present to pass `assertCheckoutOwner`.
+ * Otherwise (no issueId, or the lock isn't held), invoke a fresh heartbeat run. If that throws
+ * because the heartbeat was skipped (agent already has an active run — almost always the
+ * background wakeup run), the loop retries: a subsequent lock read will typically pick up that
+ * active run. Bounded by `opts.maxAttempts` (default 5) with a short backoff between attempts;
+ * throws a descriptive error on exhaustion.
+ */
+export async function acquireAgentRunId(
+  board: APIRequestContext,
+  agent: AgentAuth,
+  opts?: { issueId?: string; maxAttempts?: number },
+  baseUrl: string = E2E_BASE_URL,
+): Promise<string> {
+  const maxAttempts = opts?.maxAttempts ?? 5;
+  const retryDelayMs = 250;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    if (opts?.issueId) {
+      const lock = await getIssueRunLockState(board, opts.issueId, baseUrl);
+      const lockedRunId = lock.checkoutRunId ?? lock.executionRunId;
+      if (lockedRunId) return lockedRunId;
+    }
+    try {
+      return await invokeHeartbeat(board, agent.agentId, baseUrl);
+    } catch (err) {
+      lastError = err;
+      // Skipped heartbeat (agent already has an active run) — most likely the
+      // background assignment-wakeup run. Loop and re-read the lock (if an
+      // issueId was given) or retry the heartbeat on the next attempt.
+    }
+  }
+  throw new Error(
+    `acquireAgentRunId: exhausted ${maxAttempts} attempts for agent ${agent.agentId}` +
+      (opts?.issueId ? ` on issue ${opts.issueId}` : "") +
+      `; last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
+/**
  * signoff-policy.spec.ts:78-97 — on a 409, re-reads the current run lock and retries the PATCH with
  * whatever run id currently holds it (only if the lock is still held by the same agent).
  */
@@ -461,8 +516,19 @@ export async function createIssue(
 /**
  * New — target route: POST /api/issues/:id/interactions (server/src/routes/issues.ts:9109).
  * Board callers need no run id. Agent callers must supply a run id (via `opts.runId`, or a
- * fresh one is invoked automatically) — the route 401s agents with no `X-Paperclip-Run-Id`
- * (server/src/routes/issues.ts:3369-3375, `requireAgentRunId`).
+ * fresh one is acquired automatically via `acquireAgentRunId`) — the route 401s agents with no
+ * `X-Paperclip-Run-Id` (server/src/routes/issues.ts:3369-3375, `requireAgentRunId`).
+ *
+ * On a freshly created in_progress+assigned issue, the fire-and-forget assignment wakeup
+ * (`acquireAgentRunId`'s JSDoc has the full race) can hold/flip the issue's run lock out from
+ * under an independently-acquired run id — and because the background run's completion is
+ * finalized asynchronously, even reading the current lock and immediately reusing it can still
+ * lose. So the agent path here retries the POST itself on a 409 in the "Issue run ownership
+ * conflict" class (server/src/services/issues.ts `assertCheckoutOwner`) with a freshly
+ * re-acquired run id, bounded at 5 attempts with a short backoff between attempts to let that
+ * async finalization settle — mirroring `retryAgentPatchWithCurrentLockOnConflict`'s established
+ * pattern for PATCH. Other 409s (e.g. an idempotency-key conflict) are not retried and surface
+ * immediately.
  */
 export async function createInteraction(
   board: APIRequestContext,
@@ -472,17 +538,41 @@ export async function createInteraction(
   opts?: { runId?: string },
   baseUrl: string = E2E_BASE_URL,
 ): Promise<InteractionRecord> {
-  const requestCtx = asAgent ? asAgent.request : board;
-  const headers: Record<string, string> = {};
-  if (asAgent) {
-    headers["X-Paperclip-Run-Id"] = opts?.runId ?? (await invokeHeartbeat(board, asAgent.agentId, baseUrl));
+  if (!asAgent) {
+    const res = await board.post(`${baseUrl}/api/issues/${issueId}/interactions`, {
+      data: body,
+    });
+    expect(res.ok()).toBe(true);
+    return res.json();
   }
-  const res = await requestCtx.post(`${baseUrl}/api/issues/${issueId}/interactions`, {
-    headers,
-    data: body,
-  });
-  expect(res.ok()).toBe(true);
-  return res.json();
+
+  const maxAttempts = 5;
+  const retryDelayMs = 250;
+  let lastRes: APIResponse | undefined;
+  let lastText = "";
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Give the background wakeup run's asynchronous completion/finalization
+    // a moment to settle before re-sampling the lock — retrying immediately
+    // can keep losing the race (see this function's JSDoc).
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    const runId =
+      attempt === 0 && opts?.runId
+        ? opts.runId
+        : await acquireAgentRunId(board, asAgent, { issueId }, baseUrl);
+    const res = await asAgent.request.post(`${baseUrl}/api/issues/${issueId}/interactions`, {
+      headers: { "X-Paperclip-Run-Id": runId },
+      data: body,
+    });
+    if (res.status() === 201) return res.json();
+    lastRes = res;
+    lastText = await res.text();
+    const isOwnershipConflict = res.status() === 409 && /ownership conflict/i.test(lastText);
+    if (!isOwnershipConflict) break;
+  }
+  throw new Error(
+    `createInteraction: exhausted ${maxAttempts} attempts on issue ${issueId} for agent ${asAgent.agentId}; ` +
+      `last response ${lastRes?.status()}: ${lastText}`,
+  );
 }
 
 /**

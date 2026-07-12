@@ -1,72 +1,17 @@
-import { test, expect, type APIRequestContext } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import {
   E2E_BASE_URL,
   setupCollabCompany,
   cleanupCollabCompany,
   createIssue,
+  createInteraction,
   resolveInteraction,
   getAttentionItems,
   expectAttentionExit,
   seedWorkProduct,
-  invokeHeartbeat,
-  getIssueRunLockState,
-  type AgentAuth,
-  type CreateInteractionBody,
-  type InteractionRecord,
+  acquireAgentRunId,
   type CollabCompany,
 } from "./helpers/collab";
-
-/**
- * Creating an issue with a non-backlog status and an assignee fires a real
- * (fire-and-forget) assignment wakeup for the assignee agent
- * (issue-assignment-wakeup.ts, queued from issues.ts:7244), which races to
- * check the issue out via its own process-adapter run. On in_progress issues,
- * the interactions route enforces run-ownership (assertCheckoutOwner in
- * issues.ts), so posting with an independently invoked run id can conflict
- * with whatever run currently holds the checkout (observed: 409 "Issue run
- * ownership conflict") — and, since the background run's own completion is
- * finalized asynchronously (observed in server logs: "skipping late run
- * finalization because the run already left running state"), the lock
- * holder can also flip between reading it and using it.
- *
- * `createInteraction` (tests/e2e/helpers/collab.ts) has no equivalent to
- * `retryAgentPatchWithCurrentLockOnConflict`'s "current lock holder" retry
- * for this route, and it can't be adapted to retry here anyway — its
- * internal `expect(res.ok())` throws on the very 409 this needs to catch.
- * [B1 gap, noted in report.] This local retry re-samples the lock (or mints
- * a fresh run if nothing holds it) before each attempt, mirroring that same
- * established harness pattern, and asserts the raw 201 the brief's step 2
- * wants.
- */
-async function createRequestConfirmationWithLockRetry(
-  board: APIRequestContext,
-  issueId: string,
-  agent: AgentAuth,
-  body: CreateInteractionBody,
-  opts: { maxAttempts?: number; retryDelayMs?: number } = {},
-): Promise<InteractionRecord> {
-  const maxAttempts = opts.maxAttempts ?? 5;
-  const retryDelayMs = opts.retryDelayMs ?? 250;
-  let lastStatus = -1;
-  let lastBody = "";
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    const lock = await getIssueRunLockState(board, issueId);
-    const runId = lock.checkoutRunId ?? lock.executionRunId ?? (await invokeHeartbeat(board, agent.agentId));
-    const res = await agent.request.post(`${E2E_BASE_URL}/api/issues/${issueId}/interactions`, {
-      headers: { "X-Paperclip-Run-Id": runId },
-      data: body,
-    });
-    if (res.status() === 201) return res.json();
-    lastStatus = res.status();
-    lastBody = await res.text();
-    if (res.status() !== 409) break;
-  }
-  throw new Error(
-    `createRequestConfirmationWithLockRetry: exhausted ${maxAttempts} attempts on issue ${issueId}; ` +
-      `last response ${lastStatus}: ${lastBody}`,
-  );
-}
 
 /**
  * E2E: Collab harness smoke.
@@ -110,12 +55,15 @@ test.describe("Collab harness smoke", { tag: "@collab" }, () => {
     );
 
     // Step 2: worker agent asks for confirmation (POST /issues/:id/interactions).
-    // See `createRequestConfirmationWithLockRetry` above for why this doesn't
-    // go through the `createInteraction` helper directly.
-    const interaction = await createRequestConfirmationWithLockRetry(ctx.boardRequest, issue.id, ctx.agents.worker, {
-      kind: "request_confirmation",
-      payload: { version: 1, prompt: "Confirm the collab harness smoke run?" },
-    });
+    const interaction = await createInteraction(
+      ctx.boardRequest,
+      issue.id,
+      {
+        kind: "request_confirmation",
+        payload: { version: 1, prompt: "Confirm the collab harness smoke run?" },
+      },
+      ctx.agents.worker,
+    );
     expect(interaction.status).toBe("pending");
     // Schema default for request_confirmation (packages/shared/src/validators/issue.ts:1041).
     expect(interaction.continuationPolicy).toBe("none");
@@ -135,13 +83,14 @@ test.describe("Collab harness smoke", { tag: "@collab" }, () => {
     await expect(page.getByText("Confirm the collab harness smoke run?")).toBeVisible({ timeout: 10_000 });
 
     // Step 5: negative authz — agent actors cannot resolve issue-thread
-    // interactions through this board-only route, even with a fresh run id.
+    // interactions through this board-only route, even with a valid agent
+    // run id (the guard is actor-based and fires before any run-lock check).
     //
     // Stage 1 changes this deliberately: pre-code-decisions.md Q11 (decision
     // resolver authority) replaces this unconditional board-only guard with a
     // `resolverPolicy`-based check; this test freezes today's behavior
     // (today's guard: server/src/routes/issues.ts:3603).
-    const workerRunId = await invokeHeartbeat(ctx.boardRequest, ctx.agents.worker.agentId);
+    const workerRunId = await acquireAgentRunId(ctx.boardRequest, ctx.agents.worker, { issueId: issue.id });
     const agentAcceptRes = await ctx.agents.worker.request.post(
       `${E2E_BASE_URL}/api/issues/${issue.id}/interactions/${interaction.id}/accept`,
       { headers: { "X-Paperclip-Run-Id": workerRunId }, data: {} },
@@ -170,14 +119,14 @@ test.describe("Collab harness smoke", { tag: "@collab" }, () => {
   });
 
   test("seedWorkProduct: board-seeded artifact appears on the issue", async () => {
+    // Test 2 makes only board calls (no agent-authored requests), so the
+    // issue is created without an assignee to avoid triggering the
+    // fire-and-forget assignment wakeup (see `acquireAgentRunId`'s JSDoc in
+    // helpers/collab.ts) — pointless wakeup/teardown noise here.
     const issue = await createIssue(
       ctx.boardRequest,
       ctx.companyId,
-      {
-        title: "Collab harness smoke - work product",
-        status: "in_progress",
-        assigneeAgentId: ctx.agents.worker.agentId,
-      },
+      { title: "Collab harness smoke - work product" },
       ctx,
     );
 
