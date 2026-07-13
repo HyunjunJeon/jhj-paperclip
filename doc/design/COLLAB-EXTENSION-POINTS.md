@@ -2,6 +2,7 @@
 
 Date: 2026-07-13
 Status: Normative for Human–Agent Collaboration Stages 1–5
+Constraints herein are ratified by the roadmap; formal sign-off is tracked in doc/plans/2026-07-13-collab-pre-code-decisions.md (Q3/Q9 pending product).
 Closes: [`doc/plans/2026-07-12-human-agent-collaboration-roadmap.md`](../plans/2026-07-12-human-agent-collaboration-roadmap.md) §7.4 (Stage 0 exit) and §3.3 Q5 (timeout actor matrix)
 Audience: Engineers implementing Stage 1–5 collaboration features
 
@@ -167,7 +168,7 @@ This section is the Stage 0 exit deliverable for roadmap §17 ("Success metrics 
 
 **Stage 1 rider:** start emitting the already-approved-but-unemitted `has_reason`, `interaction_id`, `created_by_agent_id`, and `source_run_id` dimensions on `interaction.resolved` (all present in `PaperclipInteractionResolvedDimensions`, `generated/paperclip-telemetry.ts:42–62`, none currently populated by `emitInteractionResolvedTelemetry` or passed through `trackInteractionResolved`, `packages/shared/src/telemetry/events.ts:132–167`). Also add `request_item_verdicts` support plus `item_count`/`resolved_item_count` to the contract: these two counts are already **computed today** in `buildInteractionResolvedCounts`'s `request_item_verdicts` case (`server/src/services/issue-thread-interactions.ts:399–403`, within the function spanning 380–407) but are **silently dropped** — `trackInteractionResolved` (`packages/shared/src/telemetry/events.ts:132–167`) has no `itemCount`/`resolvedItemCount` parameters and never forwards them to `client.track`, and `request_item_verdicts` is not yet a member of `PaperclipInteractionResolvedDimensions.interaction_kind`'s enum. Landing this is a contract edit (adding the enum member and the two dimensions) plus wiring the already-computed values through the typed helper — not new computation.
 
-**Drift note (verified against `HEAD` while writing this section):** the source citation for the "computed today, silently dropped" claim is `server/src/services/issue-thread-interactions.ts:380–407` (the `buildInteractionResolvedCounts` function), not `events.ts:380–403` — `events.ts` is 168 lines total and has no content at that range. The substantive claim is correct (verified by reading both files); only the file name in the original citation was stale. This note exists per §11's change-control posture: fix drift in place, do not silently carry forward a wrong anchor.
+**Drift note (verified against `HEAD` while writing this section):** the source citation for the "computed today, silently dropped" claim is `server/src/services/issue-thread-interactions.ts:380–407` (the `buildInteractionResolvedCounts` function), not `events.ts:380–403` — `events.ts` is 167 lines total and has no content at that range. The substantive claim is correct (verified by reading both files); only the file name in the original citation was stale. This note exists per §11's change-control posture: fix drift in place, do not silently carry forward a wrong anchor.
 
 **Baseline capture (pending).** The three SQL baselines below (latency median, orphaned-wait count, questions-per-completed-issue ratio) require a running local Paperclip instance's Postgres. As of this writing (2026-07-13), no reachable instance was found from this workspace:
 

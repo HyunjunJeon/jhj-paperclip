@@ -276,6 +276,12 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
       expect(res.body).toMatchObject({ error: "User does not have access to this company" });
+
+      const rows = await db
+        .select()
+        .from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.issueId, issueId));
+      expect(rows).toHaveLength(0);
     });
 
     it("denies a cross-company agent creating an interaction", async () => {
@@ -291,6 +297,12 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
       expect(res.body).toMatchObject({ error: "Agent key cannot access another company" });
+
+      const rows = await db
+        .select()
+        .from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.issueId, issueId));
+      expect(rows).toHaveLength(0);
     });
 
     it("denies a cross-company board member accept/reject; interaction stays pending", async () => {
