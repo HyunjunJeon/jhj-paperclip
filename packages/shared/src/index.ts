@@ -54,6 +54,8 @@ export {
   type ResponsibleUserDenialCopy,
   type ResponsibleUserDenialTone,
 } from "./responsible-user-denial.js";
+
+export { isPackageBearingPayload } from "./decision-package.js";
 export type {
   AttentionDecisionVerb,
   AttentionDetailImage,
@@ -1317,6 +1319,13 @@ export {
   requestItemVerdictsPayloadSchema,
   requestItemVerdictsResultItemSchema,
   requestItemVerdictsResultSchema,
+  decisionPackageOptionLabelsSchema,
+  decisionPackageRequiredArtifactSchema,
+  decisionPackageResolverPolicySchema,
+  decisionPackageSilentDefaultHintSchema,
+  decisionPackageInputSchema,
+  decisionPackageSchema,
+  decisionPackagePayloadFieldSchema,
   createIssueThreadInteractionSchema,
   acceptIssueThreadInteractionSchema,
   rejectIssueThreadInteractionSchema,

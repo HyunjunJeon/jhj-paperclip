@@ -1247,6 +1247,7 @@ export function attentionService(db: Db) {
         totalCount: items.length,
         countsBySourceKind,
         items,
+        nextCursor: null,
       };
     },
   };

@@ -23,10 +23,10 @@ import { Badge } from "@/components/ui/badge";
 
 export const issueTrailingColumns: InboxIssueColumn[] = ["assignee", "kickedOffBy", "project", "workspace", "parent", "labels", "updated"];
 
-const issueColumnLabels: Record<InboxIssueColumn, string> = {
+export const issueColumnLabels: Record<InboxIssueColumn, string> = {
   status: "Status",
   id: "ID",
-  assignee: "Responsible",
+  assignee: "Assignee",
   kickedOffBy: "Kicked off by",
   project: "Project",
   workspace: "Workspace",
@@ -35,10 +35,10 @@ const issueColumnLabels: Record<InboxIssueColumn, string> = {
   updated: "Last updated",
 };
 
-const issueColumnDescriptions: Record<InboxIssueColumn, string> = {
+export const issueColumnDescriptions: Record<InboxIssueColumn, string> = {
   status: "Task state chip on the left edge.",
   id: "Ticket identifier like PAP-1009.",
-  assignee: "Responsible agent or board user.",
+  assignee: "Working agent or board user assigned to execute the task.",
   kickedOffBy: "Board user or agent who created the task.",
   project: "Linked project pill with its color.",
   workspace: "Execution or project workspace used for the task.",
@@ -46,6 +46,7 @@ const issueColumnDescriptions: Record<InboxIssueColumn, string> = {
   labels: "Task labels and tags.",
   updated: "Latest visible activity time.",
 };
+
 
 export function issueActivityText(issue: Issue): string {
   return `Updated ${timeAgo(issue.lastActivityAt ?? issue.lastExternalCommentAt ?? issue.updatedAt)}`;

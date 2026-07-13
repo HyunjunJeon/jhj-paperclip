@@ -3,8 +3,8 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it } from "vitest";
+import { InboxIssueMetaLeading, InboxIssueTrailingColumns, issueColumnLabels, issueColumnDescriptions } from "./IssueColumns";
 import type { Issue } from "@paperclipai/shared";
-import { InboxIssueMetaLeading, InboxIssueTrailingColumns } from "./IssueColumns";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -194,5 +194,17 @@ describe("InboxIssueTrailingColumns attribution", () => {
 
     expect(text).toContain("Morgan Product");
     expect(text).not.toContain("Unknown");
+  });
+});
+
+describe("Issue column ownership labels (S0)", () => {
+  it("exposes Assignee label for the assignee column", () => {
+    expect(issueColumnLabels.assignee).toBe("Assignee");
+  });
+
+  it("exposes working-agent description for the assignee column", () => {
+    expect(issueColumnDescriptions.assignee).toBe(
+      "Working agent or board user assigned to execute the task.",
+    );
   });
 });

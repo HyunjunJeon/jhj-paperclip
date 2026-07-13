@@ -17,9 +17,11 @@ export function attentionRoutes(db: Db) {
     }
 
     const includeDismissed = req.query.includeDismissed === "true";
+    // Pagination re-introduction deferred to PR-B; query params ignored for Stage 0 full feed.
     const feed = await svc.list(companyId, {
       userId: req.actor.userId,
       includeDismissed,
+
     });
     res.json(feed);
   });

@@ -22,6 +22,12 @@ export default defineConfig({
   // These suites target dedicated multi-user configurations/ports and are
   // intentionally not part of the default local_trusted e2e run.
   testIgnore: ["multi-user.spec.ts", "multi-user-authenticated.spec.ts"],
+  // Excludes only the (future, heavy) `@collab-journey` spec from default runs;
+  // set PAPERCLIP_E2E_COLLAB_JOURNEY=1 to include it. This is the FIRST
+  // env-conditional in this config — PAPERCLIP_E2E_SKIP_LLM is not precedent,
+  // it's a write-only var set by workflows (e2e.yml, pr.yml) that nothing here
+  // reads.
+  grepInvert: process.env.PAPERCLIP_E2E_COLLAB_JOURNEY === "1" ? undefined : /@collab-journey/,
   timeout: 60_000,
   retries: 0,
   // All specs share one throwaway server, and several toggle instance-level
@@ -65,6 +71,10 @@ export default defineConfig({
       PAPERCLIP_BIND: "loopback",
       PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private",
+      // Local e2e runs are not opted out of telemetry by default: the CI-only
+      // opt-out env vars don't apply here, and the server defaults telemetry
+      // on (server/src/config.ts:335). Disable it for this throwaway instance.
+      PAPERCLIP_TELEMETRY_DISABLED: "1",
     },
   },
   outputDir: "./test-results",

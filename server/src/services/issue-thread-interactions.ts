@@ -1,13 +1,16 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  companyMemberships,
   documents,
   heartbeatRuns,
+  issueAttachments,
   issueComments,
   issueDocuments,
   issueThreadInteractions,
+  issueWorkProducts,
   issues,
 } from "@paperclipai/db";
 import { trackInteractionResolved } from "@paperclipai/shared/telemetry";
@@ -31,6 +34,7 @@ import type {
   SubmitIssueThreadInteractionVerdicts,
 } from "@paperclipai/shared";
 import {
+  isPackageBearingPayload,
   acceptIssueThreadInteractionSchema,
   askUserQuestionsPayloadSchema,
   askUserQuestionsResultSchema,
@@ -120,6 +124,48 @@ function isTargetBoundInteractionKind(kind: string): kind is TargetBoundInteract
 
 function isUserCommentSupersedableKind(kind: string): kind is UserCommentSupersedableKind {
   return (USER_COMMENT_SUPERSEDABLE_INTERACTION_KINDS as readonly string[]).includes(kind);
+}
+
+function readNestedDecisionPackage(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const dp = (payload as Record<string, unknown>).decisionPackage;
+  if (!dp || typeof dp !== "object" || Array.isArray(dp)) return null;
+  return dp as Record<string, unknown>;
+}
+
+function readResolverPolicy(payload: unknown): { kind: "board" } | { kind: "responsible_user" | "typed_execution_participant"; userId: string } {
+  const dp = readNestedDecisionPackage(payload);
+  if (!dp) return { kind: "board" };
+  const rp = dp.resolverPolicy;
+  if (rp && typeof rp === "object" && !Array.isArray(rp)) {
+    const r = rp as Record<string, unknown>;
+    if (r.kind === "responsible_user" && typeof r.userId === "string" && r.userId.trim()) {
+      return { kind: "responsible_user", userId: r.userId.trim() };
+    }
+    if (r.kind === "typed_execution_participant" && typeof r.userId === "string" && r.userId.trim()) {
+      return { kind: "typed_execution_participant", userId: r.userId.trim() };
+    }
+    if (r.kind === "board") {
+      return { kind: "board" };
+    }
+  }
+  return { kind: "board" };
+}
+
+function stampDecisionPackageHumanOnly(payload: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...payload };
+  delete next.humanOnly;
+  const rawDp = next.decisionPackage;
+  if (rawDp && typeof rawDp === "object" && !Array.isArray(rawDp)) {
+    const dp = { ...(rawDp as Record<string, unknown>) };
+    delete dp.humanOnly;
+    if (!dp.resolverPolicy) {
+      dp.resolverPolicy = { kind: "board" };
+    }
+    dp.humanOnly = true;
+    next.decisionPackage = dp;
+  }
+  return next;
 }
 
 function isIssueThreadInteractionIdempotencyConflict(error: unknown): boolean {
@@ -229,41 +275,24 @@ function shouldSupersedeInteractionOnUserComment(interaction: UserCommentSuperse
 }
 
 function normalizeCreateInteractionInput(input: CreateIssueThreadInteraction): CreateIssueThreadInteraction {
-  switch (input.kind) {
+  // Strip client humanOnly; stamp nested decisionPackage.humanOnly for all package-bearing kinds.
+  const rawPayload = stampDecisionPackageHumanOnly({ ...(input.payload as Record<string, unknown>) });
+  const strippedInput: CreateIssueThreadInteraction = { ...input, payload: rawPayload } as CreateIssueThreadInteraction;
+
+  switch (strippedInput.kind) {
     case "ask_user_questions":
-      return {
-        ...input,
-        payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
-        },
-      };
     case "request_confirmation":
-      return {
-        ...input,
-        payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
-        },
-      };
     case "request_checkbox_confirmation":
-      return {
-        ...input,
-        payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
-        },
-      };
     case "request_item_verdicts":
       return {
-        ...input,
+        ...strippedInput,
         payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
+          ...strippedInput.payload,
+          supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
         },
-      };
+      } as CreateIssueThreadInteraction;
     default:
-      return input;
+      return strippedInput;
   }
 }
 
@@ -1111,6 +1140,122 @@ export function issueThreadInteractionService(db: Db) {
     ) => {
       const data = normalizeCreateInteractionInput(createIssueThreadInteractionSchema.parse(input));
 
+      // Payload size cap (64 KiB UTF-8 encoded) — plan Q13
+      const payloadBytes = Buffer.byteLength(JSON.stringify(data.payload ?? {}), "utf8");
+      if (payloadBytes > 64 * 1024) {
+        throw unprocessable("Interaction payload exceeds maximum size", {
+          code: "DECISION_PACKAGE_PAYLOAD_TOO_LARGE",
+          maxBytes: 64 * 1024,
+        });
+      }
+
+      if (isPackageBearingPayload(data.payload)) {
+        // Create-time resolver identity: named user must be an active company member.
+        const policy = readResolverPolicy(data.payload);
+        if (policy.kind === "responsible_user" || policy.kind === "typed_execution_participant") {
+          const member = await db
+            .select({ principalId: companyMemberships.principalId })
+            .from(companyMemberships)
+            .where(and(
+              eq(companyMemberships.companyId, issue.companyId),
+              eq(companyMemberships.principalType, "user"),
+              eq(companyMemberships.principalId, policy.userId),
+              eq(companyMemberships.status, "active"),
+            ))
+            .then((rows) => rows[0] ?? null);
+          if (!member) {
+            throw unprocessable("Decision package resolver is not an active company member", {
+              code: "DECISION_PACKAGE_RESOLVER_INVALID",
+            });
+          }
+        }
+
+        // Serialize package-bearing caps under issue row lock + company advisory lock.
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT id FROM issues WHERE id = ${issue.id} FOR UPDATE`);
+          // Company-scoped advisory lock (hashtext is int4; acceptable for Stage 1 remediation).
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"decision_package_cap:" + issue.companyId}))`);
+
+          // S-lite supersession: expire older pending package-bearing same (issue, kind, target)
+          if (
+            data.kind === "request_confirmation"
+            || data.kind === "request_checkbox_confirmation"
+            || data.kind === "ask_user_questions"
+            || data.kind === "request_item_verdicts"
+          ) {
+            const pendingPeers = await tx
+              .select()
+              .from(issueThreadInteractions)
+              .where(and(
+                eq(issueThreadInteractions.issueId, issue.id),
+                eq(issueThreadInteractions.kind, data.kind),
+                eq(issueThreadInteractions.status, "pending"),
+              ));
+            const newTarget = (data.payload as any)?.target ?? null;
+            for (const peer of pendingPeers) {
+              if (!isPackageBearingPayload(peer.payload)) continue;
+              const peerTarget = (peer.payload as any)?.target ?? null;
+              const sameTarget = JSON.stringify(peerTarget) === JSON.stringify(newTarget);
+              if (!sameTarget) continue;
+              const supersededResult =
+                peer.kind === "ask_user_questions"
+                  ? ({ version: 1 as const, answers: [], expirationReason: "superseded_by_interaction" as const, summaryMarkdown: null })
+                  : peer.kind === "request_item_verdicts"
+                    ? ({ version: 1 as const, outcome: "superseded_by_interaction" as const, complete: false, items: [] })
+                    : ({ version: 1 as const, outcome: "superseded_by_interaction" as const });
+              await tx
+                .update(issueThreadInteractions)
+                .set({
+                  status: "expired",
+                  result: supersededResult,
+                  resolvedAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(and(
+                  eq(issueThreadInteractions.id, peer.id),
+                  eq(issueThreadInteractions.status, "pending"),
+                ));
+            }
+          }
+
+          const [{ value: issueCount }] = await tx
+            .select({
+              value: sql<number>`count(*)::int`,
+            })
+            .from(issueThreadInteractions)
+            .where(and(
+              eq(issueThreadInteractions.issueId, issue.id),
+              eq(issueThreadInteractions.status, "pending"),
+              sql`jsonb_exists(${issueThreadInteractions.payload}, 'decisionPackage')`,
+            ));
+          if (Number(issueCount) >= 3) {
+            throw unprocessable("Too many pending package-bearing interactions for issue", {
+              code: "DECISION_PACKAGE_PENDING_ISSUE_LIMIT",
+              limit: 3,
+              current: Number(issueCount),
+            });
+          }
+
+          const [{ value: companyCount }] = await tx
+            .select({
+              value: sql<number>`count(*)::int`,
+            })
+            .from(issueThreadInteractions)
+            .where(and(
+              eq(issueThreadInteractions.companyId, issue.companyId),
+              eq(issueThreadInteractions.status, "pending"),
+              sql`jsonb_exists(${issueThreadInteractions.payload}, 'decisionPackage')`,
+            ));
+          if (Number(companyCount) >= 100) {
+            throw unprocessable("Too many pending package-bearing interactions for company", {
+              code: "DECISION_PACKAGE_PENDING_COMPANY_LIMIT",
+              limit: 100,
+              current: Number(companyCount),
+            });
+          }
+        });
+      }
+
       if (data.idempotencyKey) {
         const existing = await getIdempotentInteraction({
           issueId: issue.id,
@@ -1166,6 +1311,43 @@ export function issueThreadInteractionService(db: Db) {
         });
       }
 
+      // requiredArtifacts nested under decisionPackage (S2)
+      const reqArts = (data.payload as any)?.decisionPackage?.requiredArtifacts;
+      if (Array.isArray(reqArts) && reqArts.length > 0) {
+        const workProductIds = reqArts.filter((a: any) => a?.kind === "work_product" && typeof a?.id === "string").map((a: any) => a.id as string);
+        const attachmentIds = reqArts.filter((a: any) => a?.kind === "attachment" && typeof a?.id === "string").map((a: any) => a.id as string);
+        if (workProductIds.length > 0) {
+          const hits = await db
+            .select({ id: issueWorkProducts.id })
+            .from(issueWorkProducts)
+            .where(and(
+              eq(issueWorkProducts.companyId, issue.companyId),
+              eq(issueWorkProducts.issueId, issue.id),
+              inArray(issueWorkProducts.id, workProductIds),
+            ));
+          if (hits.length !== new Set(workProductIds).size) {
+            throw unprocessable("requiredArtifacts reference is invalid for this company and issue", {
+              code: "DECISION_PACKAGE_ARTIFACT_INVALID",
+            });
+          }
+        }
+        if (attachmentIds.length > 0) {
+          const hits = await db
+            .select({ id: issueAttachments.id })
+            .from(issueAttachments)
+            .where(and(
+              eq(issueAttachments.companyId, issue.companyId),
+              eq(issueAttachments.issueId, issue.id),
+              inArray(issueAttachments.id, attachmentIds),
+            ));
+          if (hits.length !== new Set(attachmentIds).size) {
+            throw unprocessable("requiredArtifacts reference is invalid for this company and issue", {
+              code: "DECISION_PACKAGE_ARTIFACT_INVALID",
+            });
+          }
+        }
+      }
+
       let created: IssueThreadInteractionRow;
       try {
         [created] = await db
@@ -1183,7 +1365,7 @@ export function issueThreadInteractionService(db: Db) {
             summary: data.summary ?? null,
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
-            payload: data.payload,
+            payload: data.payload as any,
           })
           .returning();
       } catch (error) {
@@ -1452,7 +1634,7 @@ export function issueThreadInteractionService(db: Db) {
         if (current.kind !== "request_item_verdicts") {
           throw unprocessable("Only request_item_verdicts interactions can receive item verdicts");
         }
-
+  
         const interaction = hydrateInteraction(current) as RequestItemVerdictsInteraction;
         if (current.status !== "pending") {
           if (current.status === "answered") {

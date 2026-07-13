@@ -611,11 +611,76 @@ export const suggestedTaskDraftSchema = z.object({
     });
   }
 });
+ 
+
+// Decision package enrichment (S1): nested optional object on the five payload schemas.
+// humanOnly is omitted from the input schema so Zod strips client-supplied values;
+// the server stamps humanOnly: true at persist time.
+export const decisionPackageOptionLabelsSchema = z
+  .object({
+    accept: z.string().trim().min(1).max(80).optional(),
+    reject: z.string().trim().min(1).max(80).optional(),
+    requestChanges: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+
+export const decisionPackageRequiredArtifactSchema = z
+  .object({
+    kind: z.enum(["work_product", "attachment"]),
+    id: z.string().uuid(),
+  })
+  .strict();
+
+export const decisionPackageResolverPolicySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("board") }).strict(),
+  z
+    .object({
+      kind: z.literal("responsible_user"),
+      userId: z.string().trim().min(1).max(255),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("typed_execution_participant"),
+      userId: z.string().trim().min(1).max(255),
+    })
+    .strict(),
+]);
+
+export const decisionPackageSilentDefaultHintSchema = z
+  .object({
+    afterMinutes: z.number().int().min(5).max(43_200),
+    preferred: z.enum(["escalate", "leave_pending"]),
+  })
+  .strict();
+
+/** Create-side package: callers may submit this shape (no humanOnly). */
+export const decisionPackageInputSchema = z.object({
+  version: z.literal(1),
+  reason: z.string().trim().min(1).max(2000),
+  optionLabels: decisionPackageOptionLabelsSchema.optional(),
+  requiredArtifacts: z.array(decisionPackageRequiredArtifactSchema).max(20).optional(),
+  estimatedHumanMinutes: z.number().int().min(1).max(480).optional(),
+  resolverPolicy: decisionPackageResolverPolicySchema.optional().default({ kind: "board" }),
+  silentDefaultHint: decisionPackageSilentDefaultHintSchema.optional(),
+});
+
+/** Persisted/read-side package: input + server-derived human reservation. */
+export const decisionPackageSchema = decisionPackageInputSchema.extend({
+  humanOnly: z.literal(true),
+});
+
+/** Payload field: accepts create input and persisted humanOnly stamp. */
+export const decisionPackagePayloadFieldSchema = decisionPackageInputSchema.extend({
+  // Optional on wire: server stamps true for package-bearing creates; create may omit.
+  humanOnly: z.literal(true).optional(),
+});
 
 export const suggestTasksPayloadSchema = z.object({
   version: z.literal(1),
   defaultParentId: z.string().uuid().nullable().optional(),
   tasks: z.array(suggestedTaskDraftSchema).min(1).max(50),
+  decisionPackage: decisionPackagePayloadFieldSchema.optional(),
 }).superRefine((value, ctx) => {
   const seenClientKeys = new Set<string>();
   for (const [index, task] of value.tasks.entries()) {
@@ -668,6 +733,7 @@ export const askUserQuestionsPayloadSchema = z.object({
   submitLabel: z.string().trim().max(120).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   questions: z.array(askUserQuestionsQuestionSchema).min(1).max(10),
+  decisionPackage: decisionPackagePayloadFieldSchema.optional(),
 }).superRefine((value, ctx) => {
   const seenQuestionIds = new Set<string>();
   for (const [questionIndex, question] of value.questions.entries()) {
@@ -705,7 +771,7 @@ export const askUserQuestionsResultSchema = z.object({
   answers: z.array(askUserQuestionsAnswerSchema).max(20),
   cancelled: z.literal(true).optional(),
   cancellationReason: z.string().trim().max(4000).nullable().optional(),
-  expirationReason: z.literal("superseded_by_comment").optional(),
+  expirationReason: z.enum(["superseded_by_comment", "superseded_by_interaction"]).optional(),
   commentId: z.string().uuid().nullable().optional(),
   summaryMarkdown: z.string().max(20000).nullable().optional(),
 });
@@ -754,6 +820,7 @@ export const requestConfirmationPayloadSchema = z.object({
   detailsMarkdown: z.string().max(20000).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
+  decisionPackage: decisionPackagePayloadFieldSchema.optional(),
 });
 
 export const requestCheckboxConfirmationOptionSchema = z.object({
@@ -783,6 +850,7 @@ export const requestCheckboxConfirmationPayloadSchema = z.object({
   declineReasonPlaceholder: z.string().trim().min(1).max(240).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
+  decisionPackage: decisionPackagePayloadFieldSchema.optional(),
 }).superRefine((value, ctx) => {
   const optionIds = new Set<string>();
   for (const [index, option] of value.options.entries()) {
@@ -869,7 +937,7 @@ export const requestConfirmationResumeFailureSchema = z.object({
 
 export const requestConfirmationResultSchema = z.object({
   version: z.literal(1),
-  outcome: z.enum(["accepted", "rejected", "superseded_by_comment", "stale_target"]),
+  outcome: z.enum(["accepted", "rejected", "superseded_by_comment", "superseded_by_interaction", "stale_target"]),
   reason: z.string().trim().max(4000).nullable().optional(),
   commentId: z.string().uuid().nullable().optional(),
   staleTarget: requestConfirmationTargetSchema.nullable().optional(),
@@ -926,6 +994,7 @@ export const requestItemVerdictsPayloadSchema = z.object({
   allowBulkApprove: z.boolean().optional().default(true),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
+  decisionPackage: decisionPackagePayloadFieldSchema.optional(),
 }).superRefine((value, ctx) => {
   const itemIds = new Set<string>();
   for (const [index, item] of value.items.entries()) {
@@ -990,7 +1059,7 @@ export const requestItemVerdictsResultItemSchema = z.object({
 
 export const requestItemVerdictsResultSchema = z.object({
   version: z.literal(1),
-  outcome: z.enum(["resolved", "superseded_by_comment", "stale_target", "cancelled"]),
+  outcome: z.enum(["resolved", "superseded_by_comment", "superseded_by_interaction", "stale_target", "cancelled"]),
   complete: z.boolean(),
   items: z.array(requestItemVerdictsResultItemSchema)
     .max(REQUEST_ITEM_VERDICTS_ITEM_LIMIT),

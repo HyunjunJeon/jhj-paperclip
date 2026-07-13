@@ -4,7 +4,10 @@ import {
   askUserQuestionsResultSchema,
   createIssueThreadInteractionSchema,
   submitIssueThreadInteractionVerdictsSchema,
+  requestConfirmationPayloadSchema,
+  decisionPackageResolverPolicySchema,
 } from "./validators/issue.js";
+import { isPackageBearingPayload } from "./decision-package.js";
 
 describe("issue thread interaction schemas", () => {
   it("parses request_confirmation payloads with default no-wake continuation", () => {
@@ -413,5 +416,33 @@ describe("issue thread interaction schemas", () => {
         { id: "api", verdict: "reject", reason: "Needs revision" },
       ],
     })).toThrow("verdict item ids must be unique");
+  });
+
+  it("parses request_confirmation with nested decisionPackage", () => {
+    const policy = { kind: "responsible_user", userId: "11111111-1111-4111-8111-111111111111" } as const;
+    const parsed = createIssueThreadInteractionSchema.parse({
+      kind: "request_confirmation",
+      payload: {
+        version: 1,
+        prompt: "Confirm?",
+        decisionPackage: {
+          version: 1,
+          reason: "Plan looks good, please apply.",
+          resolverPolicy: policy,
+        },
+      },
+    });
+    expect(parsed.kind).toBe("request_confirmation");
+    if (parsed.kind !== "request_confirmation") return;
+    expect(parsed.payload.decisionPackage?.reason).toBe("Plan looks good, please apply.");
+    expect(parsed.payload.decisionPackage?.resolverPolicy).toEqual(policy);
+    expect(parsed.payload.decisionPackage && "humanOnly" in parsed.payload.decisionPackage).toBe(false);
+  });
+
+  it("isPackageBearingPayload uses nested decisionPackage only", () => {
+    expect(isPackageBearingPayload({ decisionPackage: { version: 1, reason: "why" } })).toBe(true);
+    expect(isPackageBearingPayload({ reason: "why", optionLabels: { accept: "ok" } })).toBe(false);
+    expect(isPackageBearingPayload(null)).toBe(false);
+    expect(isPackageBearingPayload({})).toBe(false);
   });
 });

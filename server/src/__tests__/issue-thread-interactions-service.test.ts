@@ -2467,4 +2467,45 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
       });
     });
   });
+
+  describe("Q13 package-bearing caps", () => {
+    it("rejects create with 422 when issue already has 3 pending package-bearing interactions", async () => {
+      const { companyId, issueId } = await seedConfirmationIssue("cap-issue");
+
+      // Seed 3 pending rows directly with package-bearing payloads (bypass current schema for test shape)
+      for (let i = 0; i < 3; i++) {
+        await db.insert(issueThreadInteractions).values({
+          id: randomUUID(),
+          companyId,
+          issueId,
+          kind: "request_confirmation",
+          status: "pending",
+          continuationPolicy: "none",
+          payload: { version: 1, prompt: `p${i}`, decisionPackage: { version: 1, reason: "decide", resolverPolicy: { kind: "board" }, humanOnly: true } },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+
+      await expect(
+        interactionsSvc.create({ id: issueId, companyId }, {
+          kind: "request_confirmation",
+          continuationPolicy: "none",
+          payload: { version: 1, prompt: "another" },
+        }, { userId: "local-board" }),
+      ).rejects.toMatchObject({ status: 422, message: expect.stringContaining("package-bearing") });
+    });
+
+        it("rejects oversized payload (size gate or schema)", async () => {
+      const { companyId, issueId } = await seedConfirmationIssue("size");
+      const big = "x".repeat(70 * 1024);
+      await expect(
+        interactionsSvc.create({ id: issueId, companyId }, {
+          kind: "request_confirmation",
+          continuationPolicy: "none",
+          payload: { version: 1, prompt: "ok", detailsMarkdown: big },
+        }, { userId: "local-board" }),
+      ).rejects.toBeTruthy();
+    });
+  });
 });

@@ -76,6 +76,22 @@ describe("instance experimental settings validators", () => {
     });
   });
 
+  it("defaults human-agent collab off", () => {
+    const settings = instanceExperimentalSettingsSchema.parse({});
+
+    expect(settings.enableHumanAgentCollab).toBe(false);
+  });
+
+  it("accepts human-agent collab patches", () => {
+    expect(
+      patchInstanceExperimentalSettingsSchema.parse({
+        enableHumanAgentCollab: true,
+      }),
+    ).toEqual({
+      enableHumanAgentCollab: true,
+    });
+  });
+
   it("accepts server info debug view patches", () => {
     expect(
       patchInstanceExperimentalSettingsSchema.parse({

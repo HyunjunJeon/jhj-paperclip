@@ -132,10 +132,10 @@ export function OverviewSection({
             value={editDraft.assigneeAgentId}
             options={assigneeOptions}
             recentOptionIds={recentAssigneeIds}
-            placeholder="Responsible"
-            noneLabel="No responsible"
-            searchPlaceholder="Search responsible..."
-            emptyMessage="No responsible found."
+            placeholder="Assignee"
+            noneLabel="No assignee"
+            searchPlaceholder="Search assignees..."
+            emptyMessage="No assignees found."
             onChange={(assigneeAgentId) =>
               setEditDraft((current) => ({ ...current, assigneeAgentId }))
             }
@@ -157,7 +157,7 @@ export function OverviewSection({
                   <span className="truncate">{option.label}</span>
                 )
               ) : (
-                <span className="text-muted-foreground">Responsible</span>
+                <span className="text-muted-foreground">Assignee</span>
               )
             }
             renderOption={(option) => {

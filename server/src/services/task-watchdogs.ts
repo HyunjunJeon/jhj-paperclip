@@ -598,6 +598,15 @@ function isTerminalIssueStatus(status: string) {
   );
 }
 
+/** Returns true when a plan confirmation payload is Stage 1 package-bearing
+ * (nested decisionPackage). Eligibility helper for future watchdog auto-accept (S6 branch B).
+ */
+export function isHumanReservedPlanConfirmation(payload: unknown): boolean {
+  if (payload == null || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const dp = (payload as Record<string, unknown>).decisionPackage;
+  return dp != null && typeof dp === "object" && !Array.isArray(dp);
+}
+
 function isWatchdogReviewDisposition(issue: Pick<
   IssueRow,
   "status" | "assigneeUserId" | "executionState" | "monitorNextCheckAt"

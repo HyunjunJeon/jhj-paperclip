@@ -14,6 +14,7 @@ import {
   issueDocuments,
   issueExecutionDecisions,
   issueRelations,
+  issueThreadInteractions,
   issues as issueRows,
   issueWorkProducts,
   pipelineCaseIssueLinks,
@@ -3601,6 +3602,79 @@ export function issueRoutes(
     }
     res.status(403).json({ error: "Agent actors cannot resolve issue-thread interactions through this board-only route" });
     return true;
+  }
+
+  /** Stage 1 resolverPolicy (Q11): named user or board principal override. */
+  async function assertInteractionResolverPolicyAllowed(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string; executionState?: unknown },
+    interactionId: string,
+  ): Promise<boolean> {
+    const row = await db
+      .select({
+        id: issueThreadInteractions.id,
+        payload: issueThreadInteractions.payload,
+        status: issueThreadInteractions.status,
+      })
+      .from(issueThreadInteractions)
+      .where(and(
+        eq(issueThreadInteractions.companyId, issue.companyId),
+        eq(issueThreadInteractions.id, interactionId),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!row) {
+      res.status(404).json({ error: "Interaction not found" });
+      return false;
+    }
+
+    const payload = row.payload && typeof row.payload === "object" ? row.payload as unknown as Record<string, unknown> : {};
+    const dp = payload.decisionPackage && typeof payload.decisionPackage === "object"
+      ? payload.decisionPackage as Record<string, unknown>
+      : null;
+    const rp = dp?.resolverPolicy && typeof dp.resolverPolicy === "object"
+      ? dp.resolverPolicy as Record<string, unknown>
+      : null;
+    if (!rp || rp.kind === "board" || rp.kind == null) {
+      return true;
+    }
+
+    const namedUserId = typeof rp.userId === "string" ? rp.userId.trim() : "";
+    const actorUserId = req.actor.type === "board" ? (req.actor.userId ?? null) : null;
+
+    const membership = Array.isArray((req.actor as any).memberships)
+      ? (req.actor as any).memberships.find(
+          (m: any) => m.companyId === issue.companyId && m.status === "active",
+        )
+      : null;
+    const isBoardPrincipal =
+      req.actor.type === "board"
+      && (
+        req.actor.source === "local_implicit"
+        || req.actor.isInstanceAdmin === true
+        || membership?.membershipRole === "owner"
+        || membership?.membershipRole === "admin"
+      );
+
+    let isNamedResolver = Boolean(actorUserId && namedUserId && actorUserId === namedUserId);
+    if (isNamedResolver && rp.kind === "typed_execution_participant") {
+      const state = issue.executionState as { currentParticipant?: { type?: string; userId?: string | null } } | null;
+      const participant = state?.currentParticipant ?? null;
+      if (!(participant?.type === "user" && participant.userId === namedUserId)) {
+        isNamedResolver = false;
+      }
+    }
+
+    if (isNamedResolver) return true;
+    if (isBoardPrincipal) {
+      (res.locals as any).resolverPolicyOverride = {
+        policyKind: rp.kind === "typed_execution_participant" ? "typed_execution_participant" : "responsible_user",
+      };
+      return true;
+    }
+
+    res.status(403).json({ error: "You cannot resolve this interaction" });
+    return false;
   }
 
   async function assertTaskWatchdogCreateIssueAllowed(
@@ -9121,6 +9195,17 @@ export function issueRoutes(
       assertBoard(req);
     }
 
+    if (req.body?.payload?.decisionPackage != null) {
+      const experimental = await instanceSettings.getExperimental();
+      if (experimental.enableHumanAgentCollab !== true) {
+        res.status(403).json({
+          error: "Human–agent collaboration is not enabled",
+          code: "FEATURE_DISABLED",
+        });
+        return;
+      }
+    }
+
     const actor = getActorInfo(req);
     const agentSourceRunId = req.actor.type === "agent" ? requireAgentRunId(req, res) : null;
     if (req.actor.type === "agent" && !agentSourceRunId) return;
@@ -9167,6 +9252,7 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+      if (!(await assertInteractionResolverPolicyAllowed(req, res, issue, interactionId))) return;
 
       const actor = getActorInfo(req);
       const { interaction, createdIssues, continuationIssue } = await issueThreadInteractionsSvc.acceptInteraction(issue, interactionId, req.body, {
@@ -9190,6 +9276,9 @@ export function issueRoutes(
           interactionId: interaction.id,
           interactionKind: interaction.kind,
           interactionStatus: interaction.status,
+          ...(((res.locals as any).resolverPolicyOverride)
+            ? { resolverPolicyOverride: (res.locals as any).resolverPolicyOverride }
+            : {}),
           createdTaskCount:
             interaction.kind === "suggest_tasks"
               ? (interaction.result?.createdTasks?.length ?? 0)
@@ -9275,6 +9364,7 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+      if (!(await assertInteractionResolverPolicyAllowed(req, res, issue, interactionId))) return;
 
       const actor = getActorInfo(req);
       const interaction = await issueThreadInteractionsSvc.rejectInteraction(issue, interactionId, req.body, {
@@ -9332,6 +9422,7 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+      if (!(await assertInteractionResolverPolicyAllowed(req, res, issue, interactionId))) return;
 
       const actor = getActorInfo(req);
       const interaction = await issueThreadInteractionsSvc.answerQuestions(issue, interactionId, req.body, {
@@ -9385,6 +9476,7 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+      if (!(await assertInteractionResolverPolicyAllowed(req, res, issue, interactionId))) return;
 
       const actor = getActorInfo(req);
       const { interaction, newlyResolvedItemIds } = await issueThreadInteractionsSvc.submitItemVerdicts(
@@ -9455,6 +9547,7 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+      if (!(await assertInteractionResolverPolicyAllowed(req, res, issue, interactionId))) return;
 
       const actor = getActorInfo(req);
       const interaction = await issueThreadInteractionsSvc.cancelQuestions(issue, interactionId, req.body, {

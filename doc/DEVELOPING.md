@@ -162,6 +162,18 @@ pnpm test:release-smoke
 
 These browser suites are intended for targeted local verification and CI, not the default agent/human test command.
 
+`pnpm test:e2e` excludes the `@collab-journey` spec by default (see `grepInvert` in `tests/e2e/playwright.config.ts`). To run collab specs directly:
+
+```sh
+# All collab specs (default lane, journey excluded)
+pnpm run test:e2e -- --grep @collab
+
+# Including the heavy journey spec
+PAPERCLIP_E2E_COLLAB_JOURNEY=1 pnpm run test:e2e -- --grep @collab
+```
+
+The journey lane is manual-only per the human-agent collaboration roadmap (`doc/plans/2026-07-12-human-agent-collaboration-roadmap.md` §7.1 goal 6). A scheduled nightly run is out of scope for now: none of the 10 existing `.github/workflows/*.yml` files has a `schedule:` trigger, and adding one would need a named flake owner before it lands.
+
 For normal issue work, start with the smallest targeted check that proves the change. Reserve repo-wide typecheck/build/test runs for PR-ready handoff or changes broad enough that narrow checks do not cover the risk.
 
 ## One-Command Local Run
