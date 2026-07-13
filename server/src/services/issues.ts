@@ -1204,6 +1204,7 @@ function touchedByUserCondition(companyId: string, userId: string) {
     (
       ${issues.createdByUserId} = ${userId}
       OR ${issues.assigneeUserId} = ${userId}
+      OR ${issues.responsibleUserId} = ${userId}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}

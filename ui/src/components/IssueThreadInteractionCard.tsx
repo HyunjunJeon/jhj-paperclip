@@ -376,7 +376,7 @@ function TaskTreeNode({
         {hasMetadata ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {hasExplicitAssignee ? (
-              <TaskField label="Responsible" value={assigneeLabel} />
+              <TaskField label="Assignee" value={assigneeLabel} />
             ) : null}
             {node.task.billingCode ? (
               <TaskField label="Billing" value={node.task.billingCode} />
@@ -1264,6 +1264,12 @@ function RequestConfirmationCard({
   externalReferences?: MarkdownExternalReferenceMap;
 }) {
   const [rejecting, setRejecting] = useState(false);
+  // Package-bearing decision enrichment (S5): reason + optionLabels when present.
+  const pkg = (interaction.payload as unknown as Record<string, unknown>) || {};
+  const packageReason = typeof pkg.reason === "string" && pkg.reason.trim() ? pkg.reason.trim() : null;
+  const optionLabels = (pkg.optionLabels && typeof pkg.optionLabels === "object" ? (pkg.optionLabels as Record<string, unknown>) : null) as { accept?: string | null; reject?: string | null } | null;
+  const acceptLabel = optionLabels?.accept || interaction.payload.acceptLabel || (isPlan ? "Approve plan" : "Confirm");
+  const rejectLabel = optionLabels?.reject || interaction.payload.rejectLabel || "Decline";
   const [working, setWorking] = useState<"accept" | "reject" | null>(null);
   const [rejectReason, setRejectReason] = useState(interaction.result?.reason ?? "");
   const [rejectAttempted, setRejectAttempted] = useState(false);
@@ -1356,6 +1362,12 @@ function RequestConfirmationCard({
     <div className="space-y-4">
       {interaction.status === "pending" ? (
         <div className="space-y-3 rounded-sm border border-border/70 bg-background/75 p-4">
+          {packageReason ? (
+            <div className="rounded-sm border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+              <div className="mb-1 text-(length:--text-micro) font-semibold uppercase tracking-(--tracking-eyebrow) text-amber-600 dark:text-amber-400">Decision package</div>
+              <div className="text-foreground">{packageReason}</div>
+            </div>
+          ) : null}
           <div className="text-sm leading-6 text-foreground">
             {interaction.payload.prompt}
           </div>
@@ -1386,7 +1398,7 @@ function RequestConfirmationCard({
                   Confirming...
                 </>
               ) : (
-                interaction.payload.acceptLabel ?? "Confirm"
+                acceptLabel
               )}
             </Button>
             <Button
@@ -1402,7 +1414,7 @@ function RequestConfirmationCard({
                 setRejecting((current) => !current);
               }}
             >
-              {interaction.payload.rejectLabel ?? "Decline"}
+              {rejectLabel}
             </Button>
           </div>
 

@@ -387,6 +387,9 @@ export function decideSuccessfulRunHandoff(input: {
   if (input.hasActiveExecutionPath) return { kind: "skip", reason: "issue already has an active execution path" };
   if (input.hasQueuedWake) return { kind: "skip", reason: "issue already has a queued or deferred wake" };
   if (input.hasPendingInteractionOrApproval) {
+    // C6 / S7 coexistence: a pending issue-thread interaction (including a Stage 1 decision package)
+    // owns the next action. Successful-run-handoff must not create a competing disposition.
+    // Package-bearing interactions satisfy the "pending disposition" requirement for the handoff state machine.
     return { kind: "skip", reason: "pending interaction or approval owns the next action" };
   }
   if (input.hasPersistedMonitor) return { kind: "skip", reason: "persisted issue monitor owns the next action" };

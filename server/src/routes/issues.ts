@@ -14,6 +14,7 @@ import {
   issueDocuments,
   issueExecutionDecisions,
   issueRelations,
+  issueThreadInteractions,
   issues as issueRows,
   issueWorkProducts,
   pipelineCaseIssueLinks,
@@ -124,6 +125,7 @@ import {
   resolveTaskWatchdogMutationScope,
   taskWatchdogScopeAllowsIssueMutation,
 } from "../services/task-watchdog-scope.js";
+import { isHumanReservedPlanConfirmation } from "../services/task-watchdogs.js";
 import type { TaskWatchdogServiceDeps, taskWatchdogService } from "../services/task-watchdogs.js";
 import { logger } from "../middleware/logger.js";
 import { conflict, forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
@@ -9168,6 +9170,26 @@ export function issueRoutes(
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
 
+      // S6 watchdog human-reserve: plan confirmations carrying reason (package) or humanOnly are never
+      // auto-accepted by task-watchdog runs, even if scope would otherwise permit.
+      if (req.actor.type === "agent" && req.actor.runId) {
+        const row = await db
+          .select({ payload: issueThreadInteractions.payload, kind: issueThreadInteractions.kind })
+          .from(issueThreadInteractions)
+          .where(and(
+            eq(issueThreadInteractions.companyId, issue.companyId),
+            eq(issueThreadInteractions.id, interactionId),
+            eq(issueThreadInteractions.status, "pending"),
+          ))
+          .then((r) => r[0] ?? null);
+        if (row && (row.kind === "request_confirmation" || row.kind === "request_checkbox_confirmation")) {
+          if (isHumanReservedPlanConfirmation(row.payload)) {
+            res.status(403).json({ error: "This confirmation is human-reserved and cannot be resolved by automation." });
+            return;
+          }
+        }
+      }
+
       const actor = getActorInfo(req);
       const { interaction, createdIssues, continuationIssue } = await issueThreadInteractionsSvc.acceptInteraction(issue, interactionId, req.body, {
         agentId: actor.agentId,
@@ -9275,6 +9297,24 @@ export function issueRoutes(
       assertCompanyAccess(req, issue.companyId);
       if (await rejectAgentIssueThreadInteractionResolution(req, res, issue)) return;
       assertBoard(req);
+
+      if (req.actor.type === "agent" && req.actor.runId) {
+        const row = await db
+          .select({ payload: issueThreadInteractions.payload, kind: issueThreadInteractions.kind })
+          .from(issueThreadInteractions)
+          .where(and(
+            eq(issueThreadInteractions.companyId, issue.companyId),
+            eq(issueThreadInteractions.id, interactionId),
+            eq(issueThreadInteractions.status, "pending"),
+          ))
+          .then((r) => r[0] ?? null);
+        if (row && (row.kind === "request_confirmation" || row.kind === "request_checkbox_confirmation")) {
+          if (isHumanReservedPlanConfirmation(row.payload)) {
+            res.status(403).json({ error: "This confirmation is human-reserved and cannot be resolved by automation." });
+            return;
+          }
+        }
+      }
 
       const actor = getActorInfo(req);
       const interaction = await issueThreadInteractionsSvc.rejectInteraction(issue, interactionId, req.body, {

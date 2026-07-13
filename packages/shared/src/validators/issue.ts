@@ -611,12 +611,62 @@ export const suggestedTaskDraftSchema = z.object({
     });
   }
 });
+ 
+
+// Decision package enrichment (S1): additive optional fields on payloads.
+// humanOnly omitted from create schemas so default strip removes it from client input.
+export const decisionPackageOptionLabelsSchema = z
+  .object({
+    accept: z.string().trim().min(1).max(80).nullable().optional(),
+    reject: z.string().trim().min(1).max(80).nullable().optional(),
+    requestChanges: z.string().trim().min(1).max(80).nullable().optional(),
+  })
+  .strict();
+
+export const decisionPackageRequiredArtifactSchema = z
+  .object({
+    kind: z.enum(["work_product", "attachment"]),
+    id: z.string().uuid(),
+  })
+  .strict();
+
+export const decisionPackageResolverPolicySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("board") }).strict(),
+  z
+    .object({
+      kind: z.literal("responsible_user"),
+      userId: z.string().trim().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("typed_execution_participant"),
+      userId: z.string().trim().min(1),
+    })
+    .strict(),
+]);
+
+export const decisionPackageSilentDefaultHintSchema = z
+  .object({
+    afterMinutes: z.number().int().min(1),
+    preferred: z.enum(["escalate", "leave_pending"]),
+  })
+  .strict();
+
+const decisionPackageEnrichmentFields = {
+  reason: z.string().trim().min(1).max(4000).optional(),
+  optionLabels: decisionPackageOptionLabelsSchema.optional(),
+  requiredArtifacts: z.array(decisionPackageRequiredArtifactSchema).max(20).optional(),
+  estimatedHumanMinutes: z.number().int().positive().optional(),
+  resolverPolicy: decisionPackageResolverPolicySchema.optional(),
+  silentDefaultHint: decisionPackageSilentDefaultHintSchema.optional(),
+};
 
 export const suggestTasksPayloadSchema = z.object({
   version: z.literal(1),
   defaultParentId: z.string().uuid().nullable().optional(),
   tasks: z.array(suggestedTaskDraftSchema).min(1).max(50),
-}).superRefine((value, ctx) => {
+}).extend(decisionPackageEnrichmentFields).superRefine((value, ctx) => {
   const seenClientKeys = new Set<string>();
   for (const [index, task] of value.tasks.entries()) {
     if (seenClientKeys.has(task.clientKey)) {
@@ -668,7 +718,7 @@ export const askUserQuestionsPayloadSchema = z.object({
   submitLabel: z.string().trim().max(120).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   questions: z.array(askUserQuestionsQuestionSchema).min(1).max(10),
-}).superRefine((value, ctx) => {
+}).extend(decisionPackageEnrichmentFields).superRefine((value, ctx) => {
   const seenQuestionIds = new Set<string>();
   for (const [questionIndex, question] of value.questions.entries()) {
     if (seenQuestionIds.has(question.id)) {
@@ -754,7 +804,7 @@ export const requestConfirmationPayloadSchema = z.object({
   detailsMarkdown: z.string().max(20000).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
-});
+}).extend(decisionPackageEnrichmentFields);
 
 export const requestCheckboxConfirmationOptionSchema = z.object({
   id: z.string().trim().min(1).max(120),
@@ -783,7 +833,7 @@ export const requestCheckboxConfirmationPayloadSchema = z.object({
   declineReasonPlaceholder: z.string().trim().min(1).max(240).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
-}).superRefine((value, ctx) => {
+}).extend(decisionPackageEnrichmentFields).superRefine((value, ctx) => {
   const optionIds = new Set<string>();
   for (const [index, option] of value.options.entries()) {
     if (optionIds.has(option.id)) {
@@ -926,7 +976,7 @@ export const requestItemVerdictsPayloadSchema = z.object({
   allowBulkApprove: z.boolean().optional().default(true),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),
-}).superRefine((value, ctx) => {
+}).extend(decisionPackageEnrichmentFields).superRefine((value, ctx) => {
   const itemIds = new Set<string>();
   for (const [index, item] of value.items.entries()) {
     if (itemIds.has(item.id)) {

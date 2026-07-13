@@ -17,9 +17,13 @@ export function attentionRoutes(db: Db) {
     }
 
     const includeDismissed = req.query.includeDismissed === "true";
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+    const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
     const feed = await svc.list(companyId, {
       userId: req.actor.userId,
       includeDismissed,
+      cursor,
+      limit,
     });
     res.json(feed);
   });

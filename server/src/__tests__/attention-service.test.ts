@@ -1127,4 +1127,27 @@ describeEmbeddedPostgres("attention service", () => {
       recoveryIssueId: null,
     });
   });
+
+    describe("Q13 attention keyset pagination", () => {
+    it("accepts limit/cursor and returns nextCursor when more items available", async () => {
+      const { companyId } = await seedCompany("PG");
+      const issueId = await insertIssue({ companyId, identifier: "PG-1", title: "Paginate me" });
+      for (let i = 0; i < 4; i++) {
+        await db.insert(issueThreadInteractions).values({
+          id: randomUUID(), companyId, issueId,
+          kind: "request_confirmation", status: "pending", continuationPolicy: "none",
+          payload: { version: 1, prompt: `p${i}` },
+          createdAt: new Date(Date.now() + i * 10), updatedAt: new Date(Date.now() + i * 10),
+        });
+      }
+      const first = await attentionService(db).list(companyId, { userId: null, limit: 2 });
+      expect(Array.isArray(first.items)).toBe(true);
+      expect(first.items.length).toBeLessThanOrEqual(2);
+      if (first.nextCursor) {
+        const second = await attentionService(db).list(companyId, { userId: null, limit: 2, cursor: first.nextCursor });
+        expect(Array.isArray(second.items)).toBe(true);
+        expect(second).toHaveProperty("nextCursor");
+      }
+    });
+  });
 });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType }
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { issueStatusText } from "@/lib/status-colors";
 import { Link } from "@/lib/router";
-import { deriveOriginatingActor, type Issue, type IssueLabel } from "@paperclipai/shared";
+import { deriveOriginatingActor, deriveResponsibleUser, type Issue, type IssueLabel } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { accessApi } from "../../api/access";
 import { agentsApi } from "../../api/agents";
@@ -619,6 +619,10 @@ export function IssueProperties({
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
   const creatorUserLabel = actualUserLabel(issue.createdByUserId);
   const originatingActor = deriveOriginatingActor(issue);
+  const responsibleAttribution = deriveResponsibleUser(issue);
+  const accountableUserId =
+    responsibleAttribution.source === "explicit" ? responsibleAttribution.userId : null;
+  const accountableUserProfile = accountableUserId ? userProfileMap.get(accountableUserId) : null;
   const originatingUserProfile =
     originatingActor?.kind === "user" ? userProfileMap.get(originatingActor.id) : null;
   const originatingViaAgentName =
@@ -2248,6 +2252,15 @@ export function IssueProperties({
       ) : null}
 
       <PropertySection title="About">
+        {accountableUserId ? (
+          <PropertyRow label="Accountable">
+            <Identity
+              name={actualUserLabel(accountableUserId) ?? accountableUserProfile?.label ?? "User"}
+              avatarUrl={accountableUserProfile?.image ?? null}
+              size="sm"
+            />
+          </PropertyRow>
+        ) : null}
         {originatingActor ? (
           <PropertyRow label="Originating">
             {originatingActor.kind === "agent" ? (

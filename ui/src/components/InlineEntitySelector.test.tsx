@@ -46,10 +46,10 @@ describe("InlineEntitySelector", () => {
             { id: "agent:agent-1", label: "CodexCoder" },
             { id: "agent:agent-2", label: "DesignBot" },
           ]}
-          placeholder="Responsible"
-          noneLabel="No responsible"
-          searchPlaceholder="Search responsible..."
-          emptyMessage="No responsible found."
+          placeholder="Assignee"
+          noneLabel="No assignee"
+          searchPlaceholder="Search assignees..."
+          emptyMessage="No assignees found."
           onChange={onChange}
         />,
       );
@@ -62,7 +62,7 @@ describe("InlineEntitySelector", () => {
       trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const searchInput = document.querySelector('input[placeholder="Search responsible..."]') as HTMLInputElement | null;
+    const searchInput = document.querySelector('input[placeholder="Search assignees..."]') as HTMLInputElement | null;
     expect(searchInput).not.toBeNull();
     searchInput?.focus();
 
@@ -111,10 +111,10 @@ describe("InlineEntitySelector", () => {
             { id: "agent:agent-1", label: "CodexCoder" },
             { id: "agent:agent-2", label: "DesignBot" },
           ]}
-          placeholder="Responsible"
-          noneLabel="No responsible"
-          searchPlaceholder="Search responsible..."
-          emptyMessage="No responsible found."
+          placeholder="Assignee"
+          noneLabel="No assignee"
+          searchPlaceholder="Search assignees..."
+          emptyMessage="No assignees found."
           onChange={vi.fn()}
         />,
       );
@@ -127,7 +127,7 @@ describe("InlineEntitySelector", () => {
       trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const searchInput = document.querySelector('input[placeholder="Search responsible..."]') as HTMLInputElement | null;
+    const searchInput = document.querySelector('input[placeholder="Search assignees..."]') as HTMLInputElement | null;
     expect(searchInput).not.toBeNull();
     expect(document.activeElement).toBe(searchInput);
 

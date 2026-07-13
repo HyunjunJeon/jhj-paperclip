@@ -963,6 +963,25 @@ export interface SuggestTasksPayload {
   version: 1;
   defaultParentId?: string | null;
   tasks: SuggestedTaskDraft[];
+  reason?: string;
+  optionLabels?: {
+    accept?: string | null;
+    reject?: string | null;
+    requestChanges?: string | null;
+  };
+  requiredArtifacts?: Array<{
+    kind: "work_product" | "attachment";
+    id: string;
+  }>;
+  estimatedHumanMinutes?: number;
+  resolverPolicy?:
+    | { kind: "board" }
+    | { kind: "responsible_user"; userId: string }
+    | { kind: "typed_execution_participant"; userId: string };
+  silentDefaultHint?: {
+    afterMinutes: number;
+    preferred: "escalate" | "leave_pending";
+  };
 }
 
 export interface SuggestTasksResultCreatedTask {
@@ -1002,6 +1021,25 @@ export interface AskUserQuestionsPayload {
   submitLabel?: string | null;
   supersedeOnUserComment?: boolean;
   questions: AskUserQuestionsQuestion[];
+  reason?: string;
+  optionLabels?: {
+    accept?: string | null;
+    reject?: string | null;
+    requestChanges?: string | null;
+  };
+  requiredArtifacts?: Array<{
+    kind: "work_product" | "attachment";
+    id: string;
+  }>;
+  estimatedHumanMinutes?: number;
+  resolverPolicy?:
+    | { kind: "board" }
+    | { kind: "responsible_user"; userId: string }
+    | { kind: "typed_execution_participant"; userId: string };
+  silentDefaultHint?: {
+    afterMinutes: number;
+    preferred: "escalate" | "leave_pending";
+  };
 }
 
 export interface AskUserQuestionsAnswer {
@@ -1056,6 +1094,25 @@ export interface RequestConfirmationPayload {
   detailsMarkdown?: string | null;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
+  reason?: string;
+  optionLabels?: {
+    accept?: string | null;
+    reject?: string | null;
+    requestChanges?: string | null;
+  };
+  requiredArtifacts?: Array<{
+    kind: "work_product" | "attachment";
+    id: string;
+  }>;
+  estimatedHumanMinutes?: number;
+  resolverPolicy?:
+    | { kind: "board" }
+    | { kind: "responsible_user"; userId: string }
+    | { kind: "typed_execution_participant"; userId: string };
+  silentDefaultHint?: {
+    afterMinutes: number;
+    preferred: "escalate" | "leave_pending";
+  };
 }
 
 export interface RequestCheckboxConfirmationOption {
@@ -1080,6 +1137,25 @@ export interface RequestCheckboxConfirmationPayload {
   declineReasonPlaceholder?: string | null;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
+  reason?: string;
+  optionLabels?: {
+    accept?: string | null;
+    reject?: string | null;
+    requestChanges?: string | null;
+  };
+  requiredArtifacts?: Array<{
+    kind: "work_product" | "attachment";
+    id: string;
+  }>;
+  estimatedHumanMinutes?: number;
+  resolverPolicy?:
+    | { kind: "board" }
+    | { kind: "responsible_user"; userId: string }
+    | { kind: "typed_execution_participant"; userId: string };
+  silentDefaultHint?: {
+    afterMinutes: number;
+    preferred: "escalate" | "leave_pending";
+  };
 }
 
 export type RequestItemVerdictValue = "approve" | "reject" | "defer";
@@ -1104,6 +1180,25 @@ export interface RequestItemVerdictsPayload {
   allowBulkApprove?: boolean;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
+  reason?: string;
+  optionLabels?: {
+    accept?: string | null;
+    reject?: string | null;
+    requestChanges?: string | null;
+  };
+  requiredArtifacts?: Array<{
+    kind: "work_product" | "attachment";
+    id: string;
+  }>;
+  estimatedHumanMinutes?: number;
+  resolverPolicy?:
+    | { kind: "board" }
+    | { kind: "responsible_user"; userId: string }
+    | { kind: "typed_execution_participant"; userId: string };
+  silentDefaultHint?: {
+    afterMinutes: number;
+    preferred: "escalate" | "leave_pending";
+  };
 }
 
 export interface RequestConfirmationResult {

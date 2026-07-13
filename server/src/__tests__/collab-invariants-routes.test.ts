@@ -408,6 +408,70 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
         .where(eq(issueThreadInteractions.id, interactionId));
       expect(row?.status).toBe("pending");
     });
+
+    it("operator not named in responsible_user policy gets 403 on accept (no wake)", async () => {
+      const companyId = await seedCompany("RAUTH5");
+      await seedMember(companyId, "operator-1", "operator");
+      const issueId = await seedIssue(companyId, { status: "in_progress" });
+      const interactionId = await seedInteraction(companyId, issueId, {
+        payload: {
+          version: 1,
+          prompt: "Approve plan?",
+          reason: "stage1-policy-test",
+          resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+        },
+      });
+      const app = createApp(boardActor({ userId: "operator-1", companyId, membershipRole: "operator" }));
+      const res = await request(app)
+        .post(`/api/issues/${issueId}/interactions/${interactionId}/accept`)
+        .send({});
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body).toMatchObject({ error: "Not authorized to resolve this interaction" });
+      const [row] = await db
+        .select()
+        .from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.id, interactionId));
+      expect(row?.status).toBe("pending");
+    });
+
+    it("named responsible user (board actor) gets 200 under responsible_user policy", async () => {
+      const companyId = await seedCompany("RAUTH6");
+      await seedMember(companyId, "responsible-user", "operator");
+      const issueId = await seedIssue(companyId, { status: "in_progress" });
+      const interactionId = await seedInteraction(companyId, issueId, {
+        payload: {
+          version: 1,
+          prompt: "Approve?",
+          reason: "named",
+          resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+        },
+      });
+      const app = createApp(boardActor({ userId: "responsible-user", companyId, membershipRole: "operator" }));
+      const res = await request(app)
+        .post(`/api/issues/${issueId}/interactions/${interactionId}/accept`)
+        .send({});
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body).toMatchObject({ status: "accepted", resolvedByUserId: "responsible-user" });
+    });
+
+    it("create with requiredArtifacts foreign id returns 422", async () => {
+      const companyId = await seedCompany("RAUTH7");
+      await seedMember(companyId, "owner-1", "owner");
+      const issueId = await seedIssue(companyId, { status: "in_progress" });
+      const app = createApp(boardActor({ userId: "owner-1", companyId, membershipRole: "owner" }));
+      const res = await request(app)
+        .post(`/api/issues/${issueId}/interactions`)
+        .send({
+          kind: "request_confirmation",
+          payload: {
+            version: 1,
+            prompt: "check artifact?",
+            reason: "integrity test",
+            requiredArtifacts: [{ kind: "work_product", id: randomUUID() }],
+          },
+        });
+      expect(res.status, JSON.stringify(res.body)).toBe(422);
+    });
   });
 
   describe("budget hard-stop blocks collab-triggered continuation wake", () => {

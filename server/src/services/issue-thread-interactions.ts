@@ -5,9 +5,11 @@ import {
   agents,
   documents,
   heartbeatRuns,
+  issueAttachments,
   issueComments,
   issueDocuments,
   issueThreadInteractions,
+  issueWorkProducts,
   issues,
 } from "@paperclipai/db";
 import { trackInteractionResolved } from "@paperclipai/shared/telemetry";
@@ -47,7 +49,7 @@ import {
   suggestTasksResultSchema,
   submitIssueThreadInteractionVerdictsSchema,
 } from "@paperclipai/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { issueService, runWorkspaceIsFinalized } from "./issues.js";
 
@@ -120,6 +122,47 @@ function isTargetBoundInteractionKind(kind: string): kind is TargetBoundInteract
 
 function isUserCommentSupersedableKind(kind: string): kind is UserCommentSupersedableKind {
   return (USER_COMMENT_SUPERSEDABLE_INTERACTION_KINDS as readonly string[]).includes(kind);
+}
+
+function readResolverPolicy(payload: unknown): { kind: "board" } | { kind: "responsible_user" | "typed_execution_participant"; userId: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { kind: "board" };
+  }
+  const p = payload as Record<string, unknown>;
+  const rp = p.resolverPolicy;
+  if (rp && typeof rp === "object" && !Array.isArray(rp)) {
+    const r = rp as Record<string, unknown>;
+    if (r.kind === "responsible_user" && typeof r.userId === "string" && r.userId.trim()) {
+      return { kind: "responsible_user", userId: r.userId.trim() };
+    }
+    if (r.kind === "typed_execution_participant" && typeof r.userId === "string" && r.userId.trim()) {
+      return { kind: "typed_execution_participant", userId: r.userId.trim() };
+    }
+    if (r.kind === "board") {
+      return { kind: "board" };
+    }
+  }
+  return { kind: "board" };
+}
+function isPackageBearingPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const p = payload as Record<string, unknown>;
+  const reason = typeof p.reason === "string" ? p.reason.trim() : "";
+  if (reason.length === 0) return false;
+  const hasOther =
+    p.optionLabels != null ||
+    p.resolverPolicy != null ||
+    (Array.isArray(p.requiredArtifacts) && p.requiredArtifacts.length > 0) ||
+    (typeof p.estimatedHumanMinutes === "number" && (p.estimatedHumanMinutes as number) > 0) ||
+    p.silentDefaultHint != null;
+  return hasOther;
+}
+
+function assertResolverAuthorized(row: IssueThreadInteractionRow, actor: InteractionActor) {
+  const policy = readResolverPolicy(row.payload);
+  if (policy.kind === "board") return;
+  if (actor.userId && actor.userId === policy.userId) return;
+  throw forbidden("Not authorized to resolve this interaction");
 }
 
 function isIssueThreadInteractionIdempotencyConflict(error: unknown): boolean {
@@ -229,41 +272,41 @@ function shouldSupersedeInteractionOnUserComment(interaction: UserCommentSuperse
 }
 
 function normalizeCreateInteractionInput(input: CreateIssueThreadInteraction): CreateIssueThreadInteraction {
-  switch (input.kind) {
+  // Strip any client-supplied humanOnly (server derives for package-bearing request confirmations).
+  const rawPayload = { ...(input.payload as Record<string, unknown>) };
+  delete rawPayload.humanOnly;
+  const strippedInput: CreateIssueThreadInteraction = { ...input, payload: rawPayload } as CreateIssueThreadInteraction;
+
+  switch (strippedInput.kind) {
     case "ask_user_questions":
       return {
-        ...input,
+        ...strippedInput,
         payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
+          ...strippedInput.payload,
+          supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
         },
       };
     case "request_confirmation":
-      return {
-        ...input,
-        payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
-        },
-      };
-    case "request_checkbox_confirmation":
-      return {
-        ...input,
-        payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
-        },
-      };
+    case "request_checkbox_confirmation": {
+      const p = {
+        ...strippedInput.payload,
+        supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
+      } as Record<string, unknown>;
+      if (isPackageBearingPayload(p)) {
+        p.humanOnly = true;
+      }
+      return { ...strippedInput, payload: p } as CreateIssueThreadInteraction;
+    }
     case "request_item_verdicts":
       return {
-        ...input,
+        ...strippedInput,
         payload: {
-          ...input.payload,
-          supersedeOnUserComment: input.payload.supersedeOnUserComment ?? true,
+          ...strippedInput.payload,
+          supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
         },
       };
     default:
-      return input;
+      return strippedInput;
   }
 }
 
@@ -1111,6 +1154,49 @@ export function issueThreadInteractionService(db: Db) {
     ) => {
       const data = normalizeCreateInteractionInput(createIssueThreadInteractionSchema.parse(input));
 
+      // Payload size cap (64 KiB encoded)
+      const payloadJson = JSON.stringify(data.payload ?? {});
+      if (payloadJson.length > 64 * 1024) {
+        throw unprocessable("Interaction payload exceeds maximum size", {
+          code: "payload_too_large",
+          maxBytes: 64 * 1024,
+        });
+      }
+
+      // Package-bearing caps (Q13): max 3 pending per issue, 100 per company.
+      // Only package-bearing pending interactions are counted (reason + enrichment).
+      const pendingIssueRows = await db
+        .select({ id: issueThreadInteractions.id, payload: issueThreadInteractions.payload })
+        .from(issueThreadInteractions)
+        .where(and(
+          eq(issueThreadInteractions.issueId, issue.id),
+          eq(issueThreadInteractions.status, "pending"),
+        ));
+      const pendingPackageBearingForIssue = pendingIssueRows.filter((r) => isPackageBearingPayload(r.payload)).length;
+      if (pendingPackageBearingForIssue >= 3) {
+        throw unprocessable("Too many pending package-bearing interactions for issue", {
+          code: "pending_package_bearing_per_issue_limit_exceeded",
+          limit: 3,
+          current: pendingPackageBearingForIssue,
+        });
+      }
+
+      const pendingCompanyRows = await db
+        .select({ id: issueThreadInteractions.id, payload: issueThreadInteractions.payload })
+        .from(issueThreadInteractions)
+        .where(and(
+          eq(issueThreadInteractions.companyId, issue.companyId),
+          eq(issueThreadInteractions.status, "pending"),
+        ));
+      const pendingPackageBearingForCompany = pendingCompanyRows.filter((r) => isPackageBearingPayload(r.payload)).length;
+      if (pendingPackageBearingForCompany >= 100) {
+        throw unprocessable("Too many pending package-bearing interactions for company", {
+          code: "pending_package_bearing_per_company_limit_exceeded",
+          limit: 100,
+          current: pendingPackageBearingForCompany,
+        });
+      }
+
       if (data.idempotencyKey) {
         const existing = await getIdempotentInteraction({
           issueId: issue.id,
@@ -1166,6 +1252,46 @@ export function issueThreadInteractionService(db: Db) {
         });
       }
 
+      // requiredArtifacts nested ref integrity (S2): each must exist for same company+issue
+      const reqArts = (data.payload as any)?.requiredArtifacts;
+      if (Array.isArray(reqArts) && reqArts.length > 0) {
+        for (const a of reqArts) {
+          if (!a || typeof a !== "object") continue;
+          const { kind, id } = a as { kind?: string; id?: string };
+          if (!id || typeof id !== "string") {
+            throw unprocessable("requiredArtifacts entry missing valid id");
+          }
+          if (kind === "work_product") {
+            const hit = await db
+              .select({ id: issueWorkProducts.id })
+              .from(issueWorkProducts)
+              .where(and(
+                eq(issueWorkProducts.id, id),
+                eq(issueWorkProducts.companyId, issue.companyId),
+                eq(issueWorkProducts.issueId, issue.id),
+              ))
+              .then((r) => r[0] ?? null);
+            if (!hit) {
+              throw unprocessable("requiredArtifacts work_product does not exist for this company and issue");
+            }
+          } else if (kind === "attachment") {
+            const hit = await db
+              .select({ id: issueAttachments.id })
+              .from(issueAttachments)
+              .where(and(
+                eq(issueAttachments.id, id),
+                eq(issueAttachments.companyId, issue.companyId),
+                eq(issueAttachments.issueId, issue.id),
+              ))
+              .then((r) => r[0] ?? null);
+            if (!hit) {
+              throw unprocessable("requiredArtifacts attachment does not exist for this company and issue");
+            }
+          }
+          // unknown kind ignored (schema should have validated)
+        }
+      }
+
       let created: IssueThreadInteractionRow;
       try {
         [created] = await db
@@ -1216,6 +1342,7 @@ export function issueThreadInteractionService(db: Db) {
     ): Promise<ResolvedInteractionResult> => {
       const data = acceptIssueThreadInteractionSchema.parse(input);
       const current = await getPendingInteractionForResolution({ issue, interactionId });
+      assertResolverAuthorized(current, actor);
       switch (current.kind) {
         case "suggest_tasks":
           // Accepting suggest_tasks only creates follow-up issues; it does not
@@ -1414,6 +1541,7 @@ export function issueThreadInteractionService(db: Db) {
     ) => {
       const data = rejectIssueThreadInteractionSchema.parse(input);
       const current = await getPendingInteractionForResolution({ issue, interactionId });
+      assertResolverAuthorized(current, actor);
       switch (current.kind) {
         case "suggest_tasks":
           return issueThreadInteractionService(db).rejectSuggestedTasks(issue, interactionId, data, actor, current);
@@ -1452,6 +1580,7 @@ export function issueThreadInteractionService(db: Db) {
         if (current.kind !== "request_item_verdicts") {
           throw unprocessable("Only request_item_verdicts interactions can receive item verdicts");
         }
+        assertResolverAuthorized(current, actor);
 
         const interaction = hydrateInteraction(current) as RequestItemVerdictsInteraction;
         if (current.status !== "pending") {
@@ -1868,6 +1997,7 @@ export function issueThreadInteractionService(db: Db) {
       if (current.status !== "pending") {
         throw conflict("Interaction has already been resolved");
       }
+      assertResolverAuthorized(current, actor);
 
       const interaction = hydrateInteraction(current) as AskUserQuestionsInteraction;
       const normalizedAnswers = normalizeQuestionAnswers({
@@ -1928,6 +2058,7 @@ export function issueThreadInteractionService(db: Db) {
       if (current.status !== "pending") {
         throw conflict("Interaction has already been resolved");
       }
+      assertResolverAuthorized(current, actor);
 
       const reason = data.reason?.trim() || null;
       const [updated] = await db

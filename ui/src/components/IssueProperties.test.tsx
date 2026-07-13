@@ -484,8 +484,8 @@ describe("IssueProperties", () => {
       expect(container.textContent).toContain("CodexCoder");
       expect(container.textContent).toContain("Originating");
       expect(container.textContent).toContain("Riley Board");
-      expect(container.textContent).not.toContain("Morgan Product");
-      expect(container.textContent).not.toContain("Responsible");
+      expect(container.textContent).toContain("Morgan Product");
+      expect(container.textContent).toContain("Accountable");
       expect(container.textContent).not.toContain("Kicked off by");
       expect(container.textContent).not.toContain("Created by");
       expect(container.querySelector('[data-shape="square"]')?.textContent).toContain("CodexCoder");
@@ -563,6 +563,7 @@ describe("IssueProperties", () => {
       expect(container.textContent).toContain("Originating");
       expect(container.textContent).toContain("Morgan Product");
       expect(container.textContent).toContain("via CodexCoder");
+      expect(container.textContent).toContain("Accountable");
       expect(container.textContent).not.toContain("Responsible");
       expect(container.textContent).not.toContain("Kicked off by");
     });
@@ -586,6 +587,7 @@ describe("IssueProperties", () => {
     await waitForAssertion(() => {
       expect(container.textContent).toContain("Originating");
       expect(container.textContent).toContain("Morgan Product");
+      expect(container.textContent).toContain("Accountable");
       expect(container.textContent).not.toContain("via ");
     });
 

@@ -174,4 +174,5 @@ export interface AttentionFeed {
   totalCount: number;
   countsBySourceKind: Record<AttentionSourceKind, number>;
   items: AttentionItem[];
+  nextCursor?: string | null;
 }
