@@ -342,9 +342,12 @@ export async function getIssueRunLockState(
  * lose to that background run's checkout because its completion is finalized asynchronously.
  *
  * Strategy is current-lock-first: if `opts.issueId` is given, read the issue's run lock and — if
- * it is currently held by a run (`checkoutRunId ?? executionRunId`) — return that run id
- * directly, since that's the run a mutating request must present to pass `assertCheckoutOwner`.
- * Otherwise (no issueId, or the lock isn't held), invoke a fresh heartbeat run. If that throws
+ * it is currently held by a run (`checkoutRunId ?? executionRunId`) *and* that lock's
+ * `assigneeAgentId` matches `agent.agentId` — return that run id directly, since that's the run
+ * a mutating request must present to pass `assertCheckoutOwner`. A lock held by some other agent
+ * is not this agent's to reuse, so that case falls through to the heartbeat path instead (mirrors
+ * `retryAgentPatchWithCurrentLockOnConflict`'s ownership check). Otherwise (no issueId, or the
+ * lock isn't held), invoke a fresh heartbeat run. If that throws
  * because the heartbeat was skipped (agent already has an active run — almost always the
  * background wakeup run), the loop retries: a subsequent lock read will typically pick up that
  * active run. Bounded by `opts.maxAttempts` (default 5) with a short backoff between attempts;
@@ -364,7 +367,7 @@ export async function acquireAgentRunId(
     if (opts?.issueId) {
       const lock = await getIssueRunLockState(board, opts.issueId, baseUrl);
       const lockedRunId = lock.checkoutRunId ?? lock.executionRunId;
-      if (lockedRunId) return lockedRunId;
+      if (lockedRunId && lock.assigneeAgentId === agent.agentId) return lockedRunId;
     }
     try {
       return await invokeHeartbeat(board, agent.agentId, baseUrl);
@@ -416,7 +419,8 @@ export async function agentPatch(
   data: Record<string, unknown>,
   baseUrl: string = E2E_BASE_URL,
 ): Promise<APIResponse> {
-  const runId = await invokeHeartbeat(board, agent.agentId, baseUrl);
+  // Race-safe: assignment wakeup may hold the run lock; see acquireAgentRunId JSDoc.
+  const runId = await acquireAgentRunId(board, agent, { issueId }, baseUrl);
   const res = await agent.request.patch(`${baseUrl}/api/issues/${issueId}`, {
     headers: { "X-Paperclip-Run-Id": runId },
     data,
@@ -441,7 +445,8 @@ export async function agentCheckoutAndPatch(
   patchData: Record<string, unknown>,
   baseUrl: string = E2E_BASE_URL,
 ): Promise<APIResponse> {
-  const runId = await invokeHeartbeat(board, agent.agentId, baseUrl);
+  // Race-safe: assignment wakeup may hold the run lock; see acquireAgentRunId JSDoc.
+  const runId = await acquireAgentRunId(board, agent, { issueId }, baseUrl);
   const directPatchRes = await agent.request.patch(`${baseUrl}/api/issues/${issueId}`, {
     headers: { "X-Paperclip-Run-Id": runId },
     data: patchData,
