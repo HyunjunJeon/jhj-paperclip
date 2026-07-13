@@ -18,9 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # No explicit version: action-setup reads package.json's packageManager pin;
+      # specifying a major here conflicts with that pin and fails the run.
       - uses: pnpm/action-setup@v6
-        with:
-          version: 9
 
       - uses: actions/setup-node@v6
         with:
