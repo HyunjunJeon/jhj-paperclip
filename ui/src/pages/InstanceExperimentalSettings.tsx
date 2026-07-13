@@ -291,6 +291,7 @@ export function InstanceExperimentalSettings() {
   const enableExternalObjects = experimentalQuery.data?.enableExternalObjects === true;
   const enableBuiltInAgents = experimentalQuery.data?.enableBuiltInAgents === true;
   const enableDecisions = experimentalQuery.data?.enableDecisions === true;
+  const enableHumanAgentCollab = experimentalQuery.data?.enableHumanAgentCollab === true;
   const enableGoalsSidebarLink = experimentalQuery.data?.enableGoalsSidebarLink === true;
   const enableCases = experimentalQuery.data?.enableCases === true;
   const enableServerInfoDebugView = experimentalQuery.data?.enableServerInfoDebugView === true;
@@ -533,6 +534,23 @@ export function InstanceExperimentalSettings() {
             onCheckedChange={() => toggleMutation.mutate({ enableDecisions: !enableDecisions })}
             disabled={toggleMutation.isPending}
             aria-label="Toggle decisions experimental setting"
+          />
+        </div>
+      </Card>
+
+      <Card className="block p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Human–Agent Collaboration</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Enable experimental human-agent collaboration features.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableHumanAgentCollab}
+            onCheckedChange={() => toggleMutation.mutate({ enableHumanAgentCollab: !enableHumanAgentCollab })}
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle human-agent collaboration experimental setting"
           />
         </div>
       </Card>

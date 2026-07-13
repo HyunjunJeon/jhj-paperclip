@@ -58,6 +58,7 @@ export interface InstanceExperimentalSettings {
   enableExternalObjects: boolean;
   enableBuiltInAgents: boolean;
   enableDecisions: boolean;
+  enableHumanAgentCollab: boolean;
   enableGoalsSidebarLink: boolean;
   enableServerInfoDebugView: boolean;
   autoRestartDevServerWhenIdle: boolean;

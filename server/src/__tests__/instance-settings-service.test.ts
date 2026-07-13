@@ -38,6 +38,7 @@ describe("instance settings service", () => {
       enableCloudSync: true,
       enableBuiltInAgents: true,
       enableDecisions: false,
+      enableHumanAgentCollab: false,
       enableGoalsSidebarLink: true,
       enableServerInfoDebugView: true,
       autoRestartDevServerWhenIdle: true,
@@ -89,6 +90,30 @@ describe("instance settings service", () => {
     expect(normalizeExperimentalSettings({}).enableDecisions).toBe(false);
     expect(
       normalizeExperimentalSettings({ enableStreamlinedLeftNavigation: true }).enableDecisions,
+    ).toBe(false);
+  });
+
+  it("defaults enableHumanAgentCollab to false for empty and legacy stored settings", () => {
+    expect(normalizeExperimentalSettings(undefined).enableHumanAgentCollab).toBe(false);
+    expect(normalizeExperimentalSettings({}).enableHumanAgentCollab).toBe(false);
+    expect(
+      normalizeExperimentalSettings({ enableStreamlinedLeftNavigation: true }).enableHumanAgentCollab,
+    ).toBe(false);
+  });
+
+  it("round-trips an enableHumanAgentCollab patch through the update merge", () => {
+    const current = normalizeExperimentalSettings({});
+    const enabled = normalizeExperimentalSettings({ ...current, enableHumanAgentCollab: true });
+    expect(enabled.enableHumanAgentCollab).toBe(true);
+    expect(enabled.enableStreamlinedLeftNavigation).toBe(true);
+
+    const disabled = normalizeExperimentalSettings({ ...enabled, enableHumanAgentCollab: false });
+    expect(disabled).toEqual(current);
+  });
+
+  it("rejects non-boolean enableHumanAgentCollab values back to the default", () => {
+    expect(
+      normalizeExperimentalSettings({ enableHumanAgentCollab: "yes" }).enableHumanAgentCollab,
     ).toBe(false);
   });
 
