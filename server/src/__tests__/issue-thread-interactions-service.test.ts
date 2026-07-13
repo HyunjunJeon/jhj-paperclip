@@ -2481,7 +2481,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           kind: "request_confirmation",
           status: "pending",
           continuationPolicy: "none",
-          payload: { version: 1, prompt: `p${i}`, reason: "decide", resolverPolicy: { kind: "board" } },
+          payload: { version: 1, prompt: `p${i}`, decisionPackage: { version: 1, reason: "decide", resolverPolicy: { kind: "board" }, humanOnly: true } },
           createdAt: new Date(),
           updatedAt: new Date(),
         });

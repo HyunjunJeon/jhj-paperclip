@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -117,8 +117,6 @@ type BlockingIssueSummary = {
 type AttentionListOptions = {
   userId?: string | null;
   includeDismissed?: boolean;
-  cursor?: string;
-  limit?: number;
 };
 
 function emptyCounts(): Record<AttentionSourceKind, number> {
@@ -586,7 +584,6 @@ export function attentionService(db: Db) {
       const prefix = await companyPrefix(db, companyId);
       const dismissals = await dismissalByKey(db, companyId, options.userId);
       const includeDismissed = options.includeDismissed === true;
-      const requestedLimit = Math.max(1, Math.min(options.limit ?? 50, 200));
       const now = Date.now();
       const collected: AttentionItem[] = [];
 
@@ -650,29 +647,6 @@ export function attentionService(db: Db) {
         }));
       }
 
-      let interactionWhere = and(
-        eq(issueThreadInteractions.companyId, companyId),
-        inArray(issueThreadInteractions.status, [...PENDING_INTERACTION_STATUSES]),
-      );
-      if (options.cursor) {
-        const [tsStr, idStr] = String(options.cursor).split("|");
-        if (tsStr && idStr) {
-          const cursorTs = new Date(Number(tsStr));
-          if (!Number.isNaN(cursorTs.getTime())) {
-            interactionWhere = and(
-              interactionWhere,
-              or(
-                lt(issueThreadInteractions.updatedAt, cursorTs),
-                and(
-                  eq(issueThreadInteractions.updatedAt, cursorTs),
-                  lt(issueThreadInteractions.id, idStr),
-                ),
-              ),
-            );
-          }
-        }
-      }
-
       const interactionRows = await db
         .select({
           id: issueThreadInteractions.id,
@@ -686,9 +660,11 @@ export function attentionService(db: Db) {
           updatedAt: issueThreadInteractions.updatedAt,
         })
         .from(issueThreadInteractions)
-        .where(interactionWhere)
-        .orderBy(desc(issueThreadInteractions.updatedAt), desc(issueThreadInteractions.id))
-        .limit(requestedLimit + 1);
+        .where(and(
+          eq(issueThreadInteractions.companyId, companyId),
+          inArray(issueThreadInteractions.status, [...PENDING_INTERACTION_STATUSES]),
+        ))
+        .orderBy(desc(issueThreadInteractions.updatedAt), desc(issueThreadInteractions.id));
       const interactionIssueMap = await issueSummaryMap(db, companyId, interactionRows.map((row) => row.issueId));
       const interactionImageMap = await issueImageMap(db, companyId, interactionRows.map((row) => row.issueId));
       const interactionPlanDocumentMap = await planDocumentMap(db, companyId, interactionRows.map((row) => row.issueId));
@@ -1259,32 +1235,19 @@ export function attentionService(db: Db) {
         deduped.set(item.dedupKey, current ? betterDuplicate(current, item) : item);
       }
 
-      const sortedAll = [...deduped.values()]
+      const items = [...deduped.values()]
         .sort(compareAttentionItems)
         .map((item, index) => ({ ...item, rank: index + 1 }));
-
-      const pageItems = sortedAll.slice(0, requestedLimit);
-
       const countsBySourceKind = emptyCounts();
-      for (const item of pageItems) countsBySourceKind[item.sourceKind] += 1;
-
-      let nextCursor: string | null = null;
-      if (interactionRows.length > requestedLimit) {
-        // Use the first interaction row beyond the requested window as the keyset resume point.
-        const boundary = interactionRows[requestedLimit];
-        if (boundary) {
-          const ts = new Date(boundary.updatedAt).getTime();
-          nextCursor = `${ts}|${boundary.id}`;
-        }
-      }
+      for (const item of items) countsBySourceKind[item.sourceKind] += 1;
 
       return {
         companyId,
         generatedAt: new Date().toISOString(),
-        totalCount: pageItems.length,
+        totalCount: items.length,
         countsBySourceKind,
-        items: pageItems,
-        nextCursor,
+        items,
+        nextCursor: null,
       };
     },
   };

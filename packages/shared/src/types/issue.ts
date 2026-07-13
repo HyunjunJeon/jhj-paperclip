@@ -963,25 +963,29 @@ export interface SuggestTasksPayload {
   version: 1;
   defaultParentId?: string | null;
   tasks: SuggestedTaskDraft[];
-  reason?: string;
-  optionLabels?: {
-    accept?: string | null;
-    reject?: string | null;
-    requestChanges?: string | null;
-  };
-  requiredArtifacts?: Array<{
-    kind: "work_product" | "attachment";
-    id: string;
-  }>;
-  estimatedHumanMinutes?: number;
-  resolverPolicy?:
-    | { kind: "board" }
-    | { kind: "responsible_user"; userId: string }
-    | { kind: "typed_execution_participant"; userId: string };
-  silentDefaultHint?: {
-    afterMinutes: number;
-    preferred: "escalate" | "leave_pending";
-  };
+  decisionPackage?: {
+    version: 1;
+    reason: string;
+    optionLabels?: {
+      accept?: string;
+      reject?: string;
+      requestChanges?: string;
+    };
+    requiredArtifacts?: Array<{
+      kind: "work_product" | "attachment";
+      id: string;
+    }>;
+    estimatedHumanMinutes?: number;
+    resolverPolicy?:
+      | { kind: "board" }
+      | { kind: "responsible_user"; userId: string }
+      | { kind: "typed_execution_participant"; userId: string };
+    silentDefaultHint?: {
+      afterMinutes: number;
+      preferred: "escalate" | "leave_pending";
+    };
+    humanOnly?: true;
+  } | null;
 }
 
 export interface SuggestTasksResultCreatedTask {
@@ -1021,25 +1025,29 @@ export interface AskUserQuestionsPayload {
   submitLabel?: string | null;
   supersedeOnUserComment?: boolean;
   questions: AskUserQuestionsQuestion[];
-  reason?: string;
-  optionLabels?: {
-    accept?: string | null;
-    reject?: string | null;
-    requestChanges?: string | null;
-  };
-  requiredArtifacts?: Array<{
-    kind: "work_product" | "attachment";
-    id: string;
-  }>;
-  estimatedHumanMinutes?: number;
-  resolverPolicy?:
-    | { kind: "board" }
-    | { kind: "responsible_user"; userId: string }
-    | { kind: "typed_execution_participant"; userId: string };
-  silentDefaultHint?: {
-    afterMinutes: number;
-    preferred: "escalate" | "leave_pending";
-  };
+  decisionPackage?: {
+    version: 1;
+    reason: string;
+    optionLabels?: {
+      accept?: string;
+      reject?: string;
+      requestChanges?: string;
+    };
+    requiredArtifacts?: Array<{
+      kind: "work_product" | "attachment";
+      id: string;
+    }>;
+    estimatedHumanMinutes?: number;
+    resolverPolicy?:
+      | { kind: "board" }
+      | { kind: "responsible_user"; userId: string }
+      | { kind: "typed_execution_participant"; userId: string };
+    silentDefaultHint?: {
+      afterMinutes: number;
+      preferred: "escalate" | "leave_pending";
+    };
+    humanOnly?: true;
+  } | null;
 }
 
 export interface AskUserQuestionsAnswer {
@@ -1053,7 +1061,7 @@ export interface AskUserQuestionsResult {
   answers: AskUserQuestionsAnswer[];
   cancelled?: true;
   cancellationReason?: string | null;
-  expirationReason?: "superseded_by_comment";
+  expirationReason?: "superseded_by_comment" | "superseded_by_interaction";
   commentId?: string | null;
   summaryMarkdown?: string | null;
 }
@@ -1094,25 +1102,29 @@ export interface RequestConfirmationPayload {
   detailsMarkdown?: string | null;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
-  reason?: string;
-  optionLabels?: {
-    accept?: string | null;
-    reject?: string | null;
-    requestChanges?: string | null;
-  };
-  requiredArtifacts?: Array<{
-    kind: "work_product" | "attachment";
-    id: string;
-  }>;
-  estimatedHumanMinutes?: number;
-  resolverPolicy?:
-    | { kind: "board" }
-    | { kind: "responsible_user"; userId: string }
-    | { kind: "typed_execution_participant"; userId: string };
-  silentDefaultHint?: {
-    afterMinutes: number;
-    preferred: "escalate" | "leave_pending";
-  };
+  decisionPackage?: {
+    version: 1;
+    reason: string;
+    optionLabels?: {
+      accept?: string;
+      reject?: string;
+      requestChanges?: string;
+    };
+    requiredArtifacts?: Array<{
+      kind: "work_product" | "attachment";
+      id: string;
+    }>;
+    estimatedHumanMinutes?: number;
+    resolverPolicy?:
+      | { kind: "board" }
+      | { kind: "responsible_user"; userId: string }
+      | { kind: "typed_execution_participant"; userId: string };
+    silentDefaultHint?: {
+      afterMinutes: number;
+      preferred: "escalate" | "leave_pending";
+    };
+    humanOnly?: true;
+  } | null;
 }
 
 export interface RequestCheckboxConfirmationOption {
@@ -1137,25 +1149,29 @@ export interface RequestCheckboxConfirmationPayload {
   declineReasonPlaceholder?: string | null;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
-  reason?: string;
-  optionLabels?: {
-    accept?: string | null;
-    reject?: string | null;
-    requestChanges?: string | null;
-  };
-  requiredArtifacts?: Array<{
-    kind: "work_product" | "attachment";
-    id: string;
-  }>;
-  estimatedHumanMinutes?: number;
-  resolverPolicy?:
-    | { kind: "board" }
-    | { kind: "responsible_user"; userId: string }
-    | { kind: "typed_execution_participant"; userId: string };
-  silentDefaultHint?: {
-    afterMinutes: number;
-    preferred: "escalate" | "leave_pending";
-  };
+  decisionPackage?: {
+    version: 1;
+    reason: string;
+    optionLabels?: {
+      accept?: string;
+      reject?: string;
+      requestChanges?: string;
+    };
+    requiredArtifacts?: Array<{
+      kind: "work_product" | "attachment";
+      id: string;
+    }>;
+    estimatedHumanMinutes?: number;
+    resolverPolicy?:
+      | { kind: "board" }
+      | { kind: "responsible_user"; userId: string }
+      | { kind: "typed_execution_participant"; userId: string };
+    silentDefaultHint?: {
+      afterMinutes: number;
+      preferred: "escalate" | "leave_pending";
+    };
+    humanOnly?: true;
+  } | null;
 }
 
 export type RequestItemVerdictValue = "approve" | "reject" | "defer";
@@ -1180,30 +1196,34 @@ export interface RequestItemVerdictsPayload {
   allowBulkApprove?: boolean;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;
-  reason?: string;
-  optionLabels?: {
-    accept?: string | null;
-    reject?: string | null;
-    requestChanges?: string | null;
-  };
-  requiredArtifacts?: Array<{
-    kind: "work_product" | "attachment";
-    id: string;
-  }>;
-  estimatedHumanMinutes?: number;
-  resolverPolicy?:
-    | { kind: "board" }
-    | { kind: "responsible_user"; userId: string }
-    | { kind: "typed_execution_participant"; userId: string };
-  silentDefaultHint?: {
-    afterMinutes: number;
-    preferred: "escalate" | "leave_pending";
-  };
+  decisionPackage?: {
+    version: 1;
+    reason: string;
+    optionLabels?: {
+      accept?: string;
+      reject?: string;
+      requestChanges?: string;
+    };
+    requiredArtifacts?: Array<{
+      kind: "work_product" | "attachment";
+      id: string;
+    }>;
+    estimatedHumanMinutes?: number;
+    resolverPolicy?:
+      | { kind: "board" }
+      | { kind: "responsible_user"; userId: string }
+      | { kind: "typed_execution_participant"; userId: string };
+    silentDefaultHint?: {
+      afterMinutes: number;
+      preferred: "escalate" | "leave_pending";
+    };
+    humanOnly?: true;
+  } | null;
 }
 
 export interface RequestConfirmationResult {
   version: 1;
-  outcome: "accepted" | "rejected" | "superseded_by_comment" | "stale_target";
+  outcome: "accepted" | "rejected" | "superseded_by_comment" | "superseded_by_interaction" | "stale_target";
   reason?: string | null;
   commentId?: string | null;
   staleTarget?: RequestConfirmationTarget | null;
@@ -1234,7 +1254,7 @@ export interface RequestItemVerdictsResultItem {
 
 export interface RequestItemVerdictsResult {
   version: 1;
-  outcome: "resolved" | "superseded_by_comment" | "stale_target" | "cancelled";
+  outcome: "resolved" | "superseded_by_comment" | "superseded_by_interaction" | "stale_target" | "cancelled";
   complete: boolean;
   items: RequestItemVerdictsResultItem[];
   commentId?: string | null;

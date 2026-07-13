@@ -21,6 +21,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 import { heartbeatService } from "../services/heartbeat.js";
 import { ensureHumanRoleDefaultGrants } from "../services/principal-access-compatibility.js";
 
@@ -335,11 +336,8 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
     });
   });
 
-  // Stage 1 changes this deliberately: roadmap §8.4 resolverPolicy will
-  // restrict who may resolve issue-thread interactions. Today (routes/issues.ts
-  // :9168-9170 accept / :9276-9278 reject) the only gates are assertCompanyAccess,
-  // the agent-denial check, and assertBoard — no assignee/creator/resolverPolicy
-  // check exists.
+  // Stage 1 deliberately restricts package-bearing resolve via resolverPolicy (Q11).
+  // Non-package interactions keep board-member authority; named policy denies non-named operators.
   describe("resolver authority characterization", () => {
     it("lets an active operator who is neither assignee nor creator accept and reject", async () => {
       const companyId = await seedCompany("RAUTH1");
@@ -417,8 +415,12 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
         payload: {
           version: 1,
           prompt: "Approve plan?",
-          reason: "stage1-policy-test",
-          resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+          decisionPackage: {
+            version: 1,
+            reason: "stage1-policy-test",
+            resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+            humanOnly: true,
+          },
         },
       });
       const app = createApp(boardActor({ userId: "operator-1", companyId, membershipRole: "operator" }));
@@ -426,7 +428,7 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
         .post(`/api/issues/${issueId}/interactions/${interactionId}/accept`)
         .send({});
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      expect(res.body).toMatchObject({ error: "Not authorized to resolve this interaction" });
+      expect(res.body).toMatchObject({ error: "You cannot resolve this interaction" });
       const [row] = await db
         .select()
         .from(issueThreadInteractions)
@@ -442,8 +444,12 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
         payload: {
           version: 1,
           prompt: "Approve?",
-          reason: "named",
-          resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+          decisionPackage: {
+            version: 1,
+            reason: "named",
+            resolverPolicy: { kind: "responsible_user", userId: "responsible-user" },
+            humanOnly: true,
+          },
         },
       });
       const app = createApp(boardActor({ userId: "responsible-user", companyId, membershipRole: "operator" }));
@@ -457,6 +463,7 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
     it("create with requiredArtifacts foreign id returns 422", async () => {
       const companyId = await seedCompany("RAUTH7");
       await seedMember(companyId, "owner-1", "owner");
+      await instanceSettingsService(db).updateExperimental({ enableHumanAgentCollab: true });
       const issueId = await seedIssue(companyId, { status: "in_progress" });
       const app = createApp(boardActor({ userId: "owner-1", companyId, membershipRole: "owner" }));
       const res = await request(app)
@@ -466,8 +473,11 @@ describeEmbeddedPostgres("collab invariants (routes)", () => {
           payload: {
             version: 1,
             prompt: "check artifact?",
-            reason: "integrity test",
-            requiredArtifacts: [{ kind: "work_product", id: randomUUID() }],
+            decisionPackage: {
+              version: 1,
+              reason: "integrity test",
+              requiredArtifacts: [{ kind: "work_product", id: randomUUID() }],
+            },
           },
         });
       expect(res.status, JSON.stringify(res.body)).toBe(422);

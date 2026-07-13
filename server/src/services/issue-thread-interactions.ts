@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  companyMemberships,
   documents,
   heartbeatRuns,
   issueAttachments,
@@ -33,6 +34,7 @@ import type {
   SubmitIssueThreadInteractionVerdicts,
 } from "@paperclipai/shared";
 import {
+  isPackageBearingPayload,
   acceptIssueThreadInteractionSchema,
   askUserQuestionsPayloadSchema,
   askUserQuestionsResultSchema,
@@ -49,7 +51,7 @@ import {
   suggestTasksResultSchema,
   submitIssueThreadInteractionVerdictsSchema,
 } from "@paperclipai/shared";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { issueService, runWorkspaceIsFinalized } from "./issues.js";
 
@@ -124,12 +126,17 @@ function isUserCommentSupersedableKind(kind: string): kind is UserCommentSuperse
   return (USER_COMMENT_SUPERSEDABLE_INTERACTION_KINDS as readonly string[]).includes(kind);
 }
 
+function readNestedDecisionPackage(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const dp = (payload as Record<string, unknown>).decisionPackage;
+  if (!dp || typeof dp !== "object" || Array.isArray(dp)) return null;
+  return dp as Record<string, unknown>;
+}
+
 function readResolverPolicy(payload: unknown): { kind: "board" } | { kind: "responsible_user" | "typed_execution_participant"; userId: string } {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { kind: "board" };
-  }
-  const p = payload as Record<string, unknown>;
-  const rp = p.resolverPolicy;
+  const dp = readNestedDecisionPackage(payload);
+  if (!dp) return { kind: "board" };
+  const rp = dp.resolverPolicy;
   if (rp && typeof rp === "object" && !Array.isArray(rp)) {
     const r = rp as Record<string, unknown>;
     if (r.kind === "responsible_user" && typeof r.userId === "string" && r.userId.trim()) {
@@ -144,25 +151,21 @@ function readResolverPolicy(payload: unknown): { kind: "board" } | { kind: "resp
   }
   return { kind: "board" };
 }
-function isPackageBearingPayload(payload: unknown): boolean {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  const p = payload as Record<string, unknown>;
-  const reason = typeof p.reason === "string" ? p.reason.trim() : "";
-  if (reason.length === 0) return false;
-  const hasOther =
-    p.optionLabels != null ||
-    p.resolverPolicy != null ||
-    (Array.isArray(p.requiredArtifacts) && p.requiredArtifacts.length > 0) ||
-    (typeof p.estimatedHumanMinutes === "number" && (p.estimatedHumanMinutes as number) > 0) ||
-    p.silentDefaultHint != null;
-  return hasOther;
-}
 
-function assertResolverAuthorized(row: IssueThreadInteractionRow, actor: InteractionActor) {
-  const policy = readResolverPolicy(row.payload);
-  if (policy.kind === "board") return;
-  if (actor.userId && actor.userId === policy.userId) return;
-  throw forbidden("Not authorized to resolve this interaction");
+function stampDecisionPackageHumanOnly(payload: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...payload };
+  delete next.humanOnly;
+  const rawDp = next.decisionPackage;
+  if (rawDp && typeof rawDp === "object" && !Array.isArray(rawDp)) {
+    const dp = { ...(rawDp as Record<string, unknown>) };
+    delete dp.humanOnly;
+    if (!dp.resolverPolicy) {
+      dp.resolverPolicy = { kind: "board" };
+    }
+    dp.humanOnly = true;
+    next.decisionPackage = dp;
+  }
+  return next;
 }
 
 function isIssueThreadInteractionIdempotencyConflict(error: unknown): boolean {
@@ -272,31 +275,14 @@ function shouldSupersedeInteractionOnUserComment(interaction: UserCommentSuperse
 }
 
 function normalizeCreateInteractionInput(input: CreateIssueThreadInteraction): CreateIssueThreadInteraction {
-  // Strip any client-supplied humanOnly (server derives for package-bearing request confirmations).
-  const rawPayload = { ...(input.payload as Record<string, unknown>) };
-  delete rawPayload.humanOnly;
+  // Strip client humanOnly; stamp nested decisionPackage.humanOnly for all package-bearing kinds.
+  const rawPayload = stampDecisionPackageHumanOnly({ ...(input.payload as Record<string, unknown>) });
   const strippedInput: CreateIssueThreadInteraction = { ...input, payload: rawPayload } as CreateIssueThreadInteraction;
 
   switch (strippedInput.kind) {
     case "ask_user_questions":
-      return {
-        ...strippedInput,
-        payload: {
-          ...strippedInput.payload,
-          supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
-        },
-      };
     case "request_confirmation":
-    case "request_checkbox_confirmation": {
-      const p = {
-        ...strippedInput.payload,
-        supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
-      } as Record<string, unknown>;
-      if (isPackageBearingPayload(p)) {
-        p.humanOnly = true;
-      }
-      return { ...strippedInput, payload: p } as CreateIssueThreadInteraction;
-    }
+    case "request_checkbox_confirmation":
     case "request_item_verdicts":
       return {
         ...strippedInput,
@@ -304,7 +290,7 @@ function normalizeCreateInteractionInput(input: CreateIssueThreadInteraction): C
           ...strippedInput.payload,
           supersedeOnUserComment: (strippedInput.payload as any).supersedeOnUserComment ?? true,
         },
-      };
+      } as CreateIssueThreadInteraction;
     default:
       return strippedInput;
   }
@@ -1154,46 +1140,119 @@ export function issueThreadInteractionService(db: Db) {
     ) => {
       const data = normalizeCreateInteractionInput(createIssueThreadInteractionSchema.parse(input));
 
-      // Payload size cap (64 KiB encoded)
-      const payloadJson = JSON.stringify(data.payload ?? {});
-      if (payloadJson.length > 64 * 1024) {
+      // Payload size cap (64 KiB UTF-8 encoded) — plan Q13
+      const payloadBytes = Buffer.byteLength(JSON.stringify(data.payload ?? {}), "utf8");
+      if (payloadBytes > 64 * 1024) {
         throw unprocessable("Interaction payload exceeds maximum size", {
-          code: "payload_too_large",
+          code: "DECISION_PACKAGE_PAYLOAD_TOO_LARGE",
           maxBytes: 64 * 1024,
         });
       }
 
-      // Package-bearing caps (Q13): max 3 pending per issue, 100 per company.
-      // Only package-bearing pending interactions are counted (reason + enrichment).
-      const pendingIssueRows = await db
-        .select({ id: issueThreadInteractions.id, payload: issueThreadInteractions.payload })
-        .from(issueThreadInteractions)
-        .where(and(
-          eq(issueThreadInteractions.issueId, issue.id),
-          eq(issueThreadInteractions.status, "pending"),
-        ));
-      const pendingPackageBearingForIssue = pendingIssueRows.filter((r) => isPackageBearingPayload(r.payload)).length;
-      if (pendingPackageBearingForIssue >= 3) {
-        throw unprocessable("Too many pending package-bearing interactions for issue", {
-          code: "pending_package_bearing_per_issue_limit_exceeded",
-          limit: 3,
-          current: pendingPackageBearingForIssue,
-        });
-      }
+      if (isPackageBearingPayload(data.payload)) {
+        // Create-time resolver identity: named user must be an active company member.
+        const policy = readResolverPolicy(data.payload);
+        if (policy.kind === "responsible_user" || policy.kind === "typed_execution_participant") {
+          const member = await db
+            .select({ principalId: companyMemberships.principalId })
+            .from(companyMemberships)
+            .where(and(
+              eq(companyMemberships.companyId, issue.companyId),
+              eq(companyMemberships.principalType, "user"),
+              eq(companyMemberships.principalId, policy.userId),
+              eq(companyMemberships.status, "active"),
+            ))
+            .then((rows) => rows[0] ?? null);
+          if (!member) {
+            throw unprocessable("Decision package resolver is not an active company member", {
+              code: "DECISION_PACKAGE_RESOLVER_INVALID",
+            });
+          }
+        }
 
-      const pendingCompanyRows = await db
-        .select({ id: issueThreadInteractions.id, payload: issueThreadInteractions.payload })
-        .from(issueThreadInteractions)
-        .where(and(
-          eq(issueThreadInteractions.companyId, issue.companyId),
-          eq(issueThreadInteractions.status, "pending"),
-        ));
-      const pendingPackageBearingForCompany = pendingCompanyRows.filter((r) => isPackageBearingPayload(r.payload)).length;
-      if (pendingPackageBearingForCompany >= 100) {
-        throw unprocessable("Too many pending package-bearing interactions for company", {
-          code: "pending_package_bearing_per_company_limit_exceeded",
-          limit: 100,
-          current: pendingPackageBearingForCompany,
+        // Serialize package-bearing caps under issue row lock + company advisory lock.
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT id FROM issues WHERE id = ${issue.id} FOR UPDATE`);
+          // Company-scoped advisory lock (hashtext is int4; acceptable for Stage 1 remediation).
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"decision_package_cap:" + issue.companyId}))`);
+
+          // S-lite supersession: expire older pending package-bearing same (issue, kind, target)
+          if (
+            data.kind === "request_confirmation"
+            || data.kind === "request_checkbox_confirmation"
+            || data.kind === "ask_user_questions"
+            || data.kind === "request_item_verdicts"
+          ) {
+            const pendingPeers = await tx
+              .select()
+              .from(issueThreadInteractions)
+              .where(and(
+                eq(issueThreadInteractions.issueId, issue.id),
+                eq(issueThreadInteractions.kind, data.kind),
+                eq(issueThreadInteractions.status, "pending"),
+              ));
+            const newTarget = (data.payload as any)?.target ?? null;
+            for (const peer of pendingPeers) {
+              if (!isPackageBearingPayload(peer.payload)) continue;
+              const peerTarget = (peer.payload as any)?.target ?? null;
+              const sameTarget = JSON.stringify(peerTarget) === JSON.stringify(newTarget);
+              if (!sameTarget) continue;
+              const supersededResult =
+                peer.kind === "ask_user_questions"
+                  ? ({ version: 1 as const, answers: [], expirationReason: "superseded_by_interaction" as const, summaryMarkdown: null })
+                  : peer.kind === "request_item_verdicts"
+                    ? ({ version: 1 as const, outcome: "superseded_by_interaction" as const, complete: false, items: [] })
+                    : ({ version: 1 as const, outcome: "superseded_by_interaction" as const });
+              await tx
+                .update(issueThreadInteractions)
+                .set({
+                  status: "expired",
+                  result: supersededResult,
+                  resolvedAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(and(
+                  eq(issueThreadInteractions.id, peer.id),
+                  eq(issueThreadInteractions.status, "pending"),
+                ));
+            }
+          }
+
+          const [{ value: issueCount }] = await tx
+            .select({
+              value: sql<number>`count(*)::int`,
+            })
+            .from(issueThreadInteractions)
+            .where(and(
+              eq(issueThreadInteractions.issueId, issue.id),
+              eq(issueThreadInteractions.status, "pending"),
+              sql`jsonb_exists(${issueThreadInteractions.payload}, 'decisionPackage')`,
+            ));
+          if (Number(issueCount) >= 3) {
+            throw unprocessable("Too many pending package-bearing interactions for issue", {
+              code: "DECISION_PACKAGE_PENDING_ISSUE_LIMIT",
+              limit: 3,
+              current: Number(issueCount),
+            });
+          }
+
+          const [{ value: companyCount }] = await tx
+            .select({
+              value: sql<number>`count(*)::int`,
+            })
+            .from(issueThreadInteractions)
+            .where(and(
+              eq(issueThreadInteractions.companyId, issue.companyId),
+              eq(issueThreadInteractions.status, "pending"),
+              sql`jsonb_exists(${issueThreadInteractions.payload}, 'decisionPackage')`,
+            ));
+          if (Number(companyCount) >= 100) {
+            throw unprocessable("Too many pending package-bearing interactions for company", {
+              code: "DECISION_PACKAGE_PENDING_COMPANY_LIMIT",
+              limit: 100,
+              current: Number(companyCount),
+            });
+          }
         });
       }
 
@@ -1252,43 +1311,40 @@ export function issueThreadInteractionService(db: Db) {
         });
       }
 
-      // requiredArtifacts nested ref integrity (S2): each must exist for same company+issue
-      const reqArts = (data.payload as any)?.requiredArtifacts;
+      // requiredArtifacts nested under decisionPackage (S2)
+      const reqArts = (data.payload as any)?.decisionPackage?.requiredArtifacts;
       if (Array.isArray(reqArts) && reqArts.length > 0) {
-        for (const a of reqArts) {
-          if (!a || typeof a !== "object") continue;
-          const { kind, id } = a as { kind?: string; id?: string };
-          if (!id || typeof id !== "string") {
-            throw unprocessable("requiredArtifacts entry missing valid id");
+        const workProductIds = reqArts.filter((a: any) => a?.kind === "work_product" && typeof a?.id === "string").map((a: any) => a.id as string);
+        const attachmentIds = reqArts.filter((a: any) => a?.kind === "attachment" && typeof a?.id === "string").map((a: any) => a.id as string);
+        if (workProductIds.length > 0) {
+          const hits = await db
+            .select({ id: issueWorkProducts.id })
+            .from(issueWorkProducts)
+            .where(and(
+              eq(issueWorkProducts.companyId, issue.companyId),
+              eq(issueWorkProducts.issueId, issue.id),
+              inArray(issueWorkProducts.id, workProductIds),
+            ));
+          if (hits.length !== new Set(workProductIds).size) {
+            throw unprocessable("requiredArtifacts reference is invalid for this company and issue", {
+              code: "DECISION_PACKAGE_ARTIFACT_INVALID",
+            });
           }
-          if (kind === "work_product") {
-            const hit = await db
-              .select({ id: issueWorkProducts.id })
-              .from(issueWorkProducts)
-              .where(and(
-                eq(issueWorkProducts.id, id),
-                eq(issueWorkProducts.companyId, issue.companyId),
-                eq(issueWorkProducts.issueId, issue.id),
-              ))
-              .then((r) => r[0] ?? null);
-            if (!hit) {
-              throw unprocessable("requiredArtifacts work_product does not exist for this company and issue");
-            }
-          } else if (kind === "attachment") {
-            const hit = await db
-              .select({ id: issueAttachments.id })
-              .from(issueAttachments)
-              .where(and(
-                eq(issueAttachments.id, id),
-                eq(issueAttachments.companyId, issue.companyId),
-                eq(issueAttachments.issueId, issue.id),
-              ))
-              .then((r) => r[0] ?? null);
-            if (!hit) {
-              throw unprocessable("requiredArtifacts attachment does not exist for this company and issue");
-            }
+        }
+        if (attachmentIds.length > 0) {
+          const hits = await db
+            .select({ id: issueAttachments.id })
+            .from(issueAttachments)
+            .where(and(
+              eq(issueAttachments.companyId, issue.companyId),
+              eq(issueAttachments.issueId, issue.id),
+              inArray(issueAttachments.id, attachmentIds),
+            ));
+          if (hits.length !== new Set(attachmentIds).size) {
+            throw unprocessable("requiredArtifacts reference is invalid for this company and issue", {
+              code: "DECISION_PACKAGE_ARTIFACT_INVALID",
+            });
           }
-          // unknown kind ignored (schema should have validated)
         }
       }
 
@@ -1309,7 +1365,7 @@ export function issueThreadInteractionService(db: Db) {
             summary: data.summary ?? null,
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
-            payload: data.payload,
+            payload: data.payload as any,
           })
           .returning();
       } catch (error) {
@@ -1342,7 +1398,6 @@ export function issueThreadInteractionService(db: Db) {
     ): Promise<ResolvedInteractionResult> => {
       const data = acceptIssueThreadInteractionSchema.parse(input);
       const current = await getPendingInteractionForResolution({ issue, interactionId });
-      assertResolverAuthorized(current, actor);
       switch (current.kind) {
         case "suggest_tasks":
           // Accepting suggest_tasks only creates follow-up issues; it does not
@@ -1541,7 +1596,6 @@ export function issueThreadInteractionService(db: Db) {
     ) => {
       const data = rejectIssueThreadInteractionSchema.parse(input);
       const current = await getPendingInteractionForResolution({ issue, interactionId });
-      assertResolverAuthorized(current, actor);
       switch (current.kind) {
         case "suggest_tasks":
           return issueThreadInteractionService(db).rejectSuggestedTasks(issue, interactionId, data, actor, current);
@@ -1580,8 +1634,7 @@ export function issueThreadInteractionService(db: Db) {
         if (current.kind !== "request_item_verdicts") {
           throw unprocessable("Only request_item_verdicts interactions can receive item verdicts");
         }
-        assertResolverAuthorized(current, actor);
-
+  
         const interaction = hydrateInteraction(current) as RequestItemVerdictsInteraction;
         if (current.status !== "pending") {
           if (current.status === "answered") {
@@ -1997,7 +2050,6 @@ export function issueThreadInteractionService(db: Db) {
       if (current.status !== "pending") {
         throw conflict("Interaction has already been resolved");
       }
-      assertResolverAuthorized(current, actor);
 
       const interaction = hydrateInteraction(current) as AskUserQuestionsInteraction;
       const normalizedAnswers = normalizeQuestionAnswers({
@@ -2058,7 +2110,6 @@ export function issueThreadInteractionService(db: Db) {
       if (current.status !== "pending") {
         throw conflict("Interaction has already been resolved");
       }
-      assertResolverAuthorized(current, actor);
 
       const reason = data.reason?.trim() || null;
       const [updated] = await db

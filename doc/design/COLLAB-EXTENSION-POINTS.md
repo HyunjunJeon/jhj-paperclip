@@ -27,7 +27,7 @@ Human-facing structured asks run through exactly one mechanism: `issue_thread_in
   - `requestItemVerdictsPayloadSchema` — line 909
 - **The discriminated union that wires kind → payload schema**, `createIssueThreadInteractionSchema` — `packages/shared/src/validators/issue.ts:1013–1064`.
 
-**Rule:** Stage 1's decision-package enrichment (`reason`, `optionLabels`, `requiredArtifacts`, `estimatedHumanMinutes`, `resolverPolicy`, `humanOnly`, `silentDefaultHint` — roadmap §8.4) is **additive optional fields on these existing schemas**, not a sixth kind. Never add a new `kind` to the union above, and never add a new resolve verb — resolution always routes through the existing `accept | reject | respond | verdicts | cancel` interaction endpoints and the existing `none | wake_assignee | wake_assignee_on_accept` continuation policies. This is the ratified answer to decisions-record Q2.
+**Rule:** Stage 1's decision-package enrichment is one nested optional object — `decisionPackage` — on these existing schemas (fields: `version`, `reason`, `optionLabels`, `requiredArtifacts`, `estimatedHumanMinutes`, `resolverPolicy`, server-stamped `humanOnly`, schema-only `silentDefaultHint` — roadmap §8.4 / remediation 2026-07-13). It is **not** a sixth kind and not flat top-level payload fields. Never add a new `kind` to the union above, and never add a new resolve verb — resolution always routes through the existing `accept | reject | respond | verdicts | cancel` interaction endpoints and the existing `none | wake_assignee | wake_assignee_on_accept` continuation policies. Package-bearing means `jsonb_exists(payload, 'decisionPackage')` / nested object present. This is the ratified answer to decisions-record Q2.
 
 ## 3. Attention union + dedupKey rules
 

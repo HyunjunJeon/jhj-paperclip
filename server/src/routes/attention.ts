@@ -17,13 +17,11 @@ export function attentionRoutes(db: Db) {
     }
 
     const includeDismissed = req.query.includeDismissed === "true";
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
-    const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+    // Pagination re-introduction deferred to PR-B; query params ignored for Stage 0 full feed.
     const feed = await svc.list(companyId, {
       userId: req.actor.userId,
       includeDismissed,
-      cursor,
-      limit,
+
     });
     res.json(feed);
   });

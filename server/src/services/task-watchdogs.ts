@@ -598,19 +598,13 @@ function isTerminalIssueStatus(status: string) {
   );
 }
 
-/** Returns true when a plan confirmation interaction payload indicates a human-reserved
- * decision (package-bearing with reason/enrichment, or humanOnly server flag).
- * Used to keep task-watchdog from auto-accepting human waits (S6).
+/** Returns true when a plan confirmation payload is Stage 1 package-bearing
+ * (nested decisionPackage). Eligibility helper for future watchdog auto-accept (S6 branch B).
  */
 export function isHumanReservedPlanConfirmation(payload: unknown): boolean {
-  const p = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  if (p.humanOnly === true) return true;
-  const reason = typeof p.reason === "string" ? p.reason.trim() : "";
-  if (reason.length > 0) return true;
-  // Package-bearing if any enrichment beyond bare legacy is present together with intent to be human-facing.
-  const hasEnrichment = !!(p.optionLabels || p.resolverPolicy || p.requiredArtifacts || p.estimatedHumanMinutes);
-  if (hasEnrichment) return true;
-  return false;
+  if (payload == null || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const dp = (payload as Record<string, unknown>).decisionPackage;
+  return dp != null && typeof dp === "object" && !Array.isArray(dp);
 }
 
 function isWatchdogReviewDisposition(issue: Pick<

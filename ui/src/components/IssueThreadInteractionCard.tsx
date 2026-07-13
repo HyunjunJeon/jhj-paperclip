@@ -1264,10 +1264,17 @@ function RequestConfirmationCard({
   externalReferences?: MarkdownExternalReferenceMap;
 }) {
   const [rejecting, setRejecting] = useState(false);
-  // Package-bearing decision enrichment (S5): reason + optionLabels when present.
-  const pkg = (interaction.payload as unknown as Record<string, unknown>) || {};
-  const packageReason = typeof pkg.reason === "string" && pkg.reason.trim() ? pkg.reason.trim() : null;
-  const optionLabels = (pkg.optionLabels && typeof pkg.optionLabels === "object" ? (pkg.optionLabels as Record<string, unknown>) : null) as { accept?: string | null; reject?: string | null } | null;
+  // Package-bearing decision enrichment (S5): nested decisionPackage reason + optionLabels.
+  const decisionPackage = (interaction.payload as unknown as { decisionPackage?: Record<string, unknown> | null }).decisionPackage;
+  const packageReason =
+    decisionPackage && typeof decisionPackage.reason === "string" && decisionPackage.reason.trim()
+      ? decisionPackage.reason.trim()
+      : null;
+  const optionLabels = (
+    decisionPackage?.optionLabels && typeof decisionPackage.optionLabels === "object"
+      ? (decisionPackage.optionLabels as Record<string, unknown>)
+      : null
+  ) as { accept?: string | null; reject?: string | null } | null;
   const acceptLabel = optionLabels?.accept || interaction.payload.acceptLabel || (isPlan ? "Approve plan" : "Confirm");
   const rejectLabel = optionLabels?.reject || interaction.payload.rejectLabel || "Decline";
   const [working, setWorking] = useState<"accept" | "reject" | null>(null);
