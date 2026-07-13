@@ -754,6 +754,7 @@ Disable or avoid task-watchdog noise on journey company when possible.
 - [ ] Token gates clean for UI  
 - [ ] Every new visual surface has a Storybook story; visual diffs reviewed, baseline-manifest metadata updated when intentional, and a11y checks clean
 - [ ] Low-trust denial, nested-reference scoping, idempotency, failure-atomic continuation, and bounded-queue cases pass for each new mutating surface
+- [ ] COLLAB-EXTENSION-POINTS.md updated in the same PR when a schema field, wake reason, dedupKey family, or event type is added
 
 ---
 
