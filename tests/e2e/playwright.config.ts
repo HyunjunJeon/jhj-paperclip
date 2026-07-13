@@ -22,6 +22,12 @@ export default defineConfig({
   // These suites target dedicated multi-user configurations/ports and are
   // intentionally not part of the default local_trusted e2e run.
   testIgnore: ["multi-user.spec.ts", "multi-user-authenticated.spec.ts"],
+  // Excludes only the (future, heavy) `@collab-journey` spec from default runs;
+  // set PAPERCLIP_E2E_COLLAB_JOURNEY=1 to include it. This is the FIRST
+  // env-conditional in this config — PAPERCLIP_E2E_SKIP_LLM is not precedent,
+  // it's a write-only var set by workflows (e2e.yml, pr.yml) that nothing here
+  // reads.
+  grepInvert: process.env.PAPERCLIP_E2E_COLLAB_JOURNEY === "1" ? undefined : /@collab-journey/,
   timeout: 60_000,
   retries: 0,
   // All specs share one throwaway server, and several toggle instance-level

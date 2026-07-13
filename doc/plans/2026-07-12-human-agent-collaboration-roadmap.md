@@ -340,7 +340,7 @@ Server: freeze attention + interaction contract shapes in vitest (`attention-ser
 | Suite | When |
 |---|---|
 | Server collab tests | Every collab PR (default gate) |
-| `pnpm test:e2e` | Collab PRs + main CI (existing + thin new smokes) |
+| `pnpm test:e2e` | Every PR (`pr.yml`) + manual dispatch (`e2e.yml`); no push-to-master or scheduled lane exists today |
 | `@collab` journey | **Manual by default**; scheduled nightly only after an owned workflow/filter is wired |
 | Multi-user e2e job | Only when pair/auth in stage exit criteria |
 | Release smoke | Onboard/auth-touching |
