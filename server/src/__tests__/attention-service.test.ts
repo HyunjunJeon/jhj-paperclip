@@ -1079,22 +1079,12 @@ describeEmbeddedPostgres("attention service", () => {
     // "successful_run_missing_state" (NOT the "missing_disposition" cause the
     // older fixture above this one in the file uses -- that fixture predates
     // this identity and does not match the writer), and the source-scoped
-    // fingerprint format. NOTE: the writer itself only ever sets status
-    // "active" (issue-recovery-actions.ts upsertSourceScoped, both the insert
-    // and update branches) -- nothing in server/src currently transitions an
-    // issue_recovery_actions row to "escalated" (verified: no `status:
-    // "escalated"` write exists anywhere, including
-    // escalateStrandedRecoveryIssueInPlace, which only ever sets the *issue's*
-    // status to "blocked"). "escalated" is schema-supported
-    // (issue_recovery_actions_active_source_uq / OPEN_RECOVERY_STATUSES) but
-    // currently unreached in production. This test deliberately seeds it
-    // anyway to freeze attention.ts's high-severity / board-escalated branch
-    // (attention.ts:819,831) for that row identity -- this is the C6 baseline
-    // Stage 1's canonical-dedup work must keep stable or migrate
-    // deliberately, but today it characterizes a reachable-by-schema, not
-    // reachable-by-writer, state. See task-B5-report.md for the discrepancy
-    // this raised against the task brief (which attributed status:
-    // "escalated" to the production writer).
+    // fingerprint format. This is the C6 baseline Stage 1's canonical-dedup
+    // work must keep stable or migrate deliberately.
+    // Production writer only ever writes status "active"
+    // (issue-recovery-actions.ts upsertSourceScopedUnlocked); "escalated" is a
+    // legal read-path status (attention.ts:76-77) with no current writer --
+    // do not seed it as baseline.
     const fingerprint = `source_scoped_recovery:${companyId}:${sourceIssueId}:successful_run_missing_state`;
     await db.insert(issueRecoveryActions).values({
       id: randomUUID(),
@@ -1102,7 +1092,7 @@ describeEmbeddedPostgres("attention service", () => {
       sourceIssueId,
       recoveryIssueId: null,
       kind: "missing_disposition",
-      status: "escalated",
+      status: "active",
       ownerType: "board",
       ownerAgentId: null,
       ownerUserId: null,
@@ -1121,8 +1111,10 @@ describeEmbeddedPostgres("attention service", () => {
     expect(recoveryItem?.dedupKey).toBe(expectedDedupKey);
     expect(recoveryItem?.id).toBe(`recovery_action:${expectedDedupKey}`);
     expect(recoveryItem?.dismissalKey).toBe(`attention:${expectedDedupKey}`);
-    expect(recoveryItem?.severity).toBe("high");
-    expect(recoveryItem?.subject.status).toBe("escalated");
+    // attention.ts:831 maps severity "high" only for status "escalated"; the
+    // production-written "active" row surfaces as "medium".
+    expect(recoveryItem?.severity).toBe("medium");
+    expect(recoveryItem?.subject.status).toBe("active");
     expect(recoveryItem?.subject.title).toBe(
       "Choose and record a valid issue disposition without copying transcript content.",
     );
