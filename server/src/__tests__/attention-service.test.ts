@@ -958,4 +958,181 @@ describeEmbeddedPostgres("attention service", () => {
     await request(app(board)).get(`/api/companies/${companyId}/attention`).expect(200);
     await request(app(agent)).get(`/api/companies/${companyId}/attention`).expect(403);
   });
+
+  // The following two tests are contract-shape freezes (task B5): exhaustive
+  // literal assertions on the AttentionItem/AttentionFeed shape so Stage 1's
+  // canonical-dedup and resolver-authority work has a byte-exact floor to
+  // diff against, rather than discovering shape drift only via UI screenshots.
+
+  it("freezes the attention item contract for a pending interaction and a pending approval", async () => {
+    const { companyId } = await seedCompany("CTR");
+    const issueId = await insertIssue({
+      companyId,
+      identifier: "CTR-1",
+      title: "Needs a decision",
+      status: "in_progress",
+      updatedAt: new Date("2026-07-09T12:00:00.000Z"),
+    });
+    const interactionId = randomUUID();
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      title: "Confirm the rollout",
+      payload: { version: 1, prompt: "Roll out now?" },
+      createdAt: new Date("2026-07-09T12:01:00.000Z"),
+      updatedAt: new Date("2026-07-09T12:01:00.000Z"),
+    });
+    const approvalId = randomUUID();
+    await db.insert(approvals).values({
+      id: approvalId,
+      companyId,
+      type: "hire_agent",
+      status: "pending",
+      payload: { title: "Hire QA" },
+      createdAt: new Date("2026-07-09T12:02:00.000Z"),
+      updatedAt: new Date("2026-07-09T12:02:00.000Z"),
+    });
+
+    const feed = await attentionService(db).list(companyId, { userId: "board-user" });
+
+    // emptyCounts() always populates all 10 AttentionSourceKind keys, regardless
+    // of which sources actually produced items this call (attention.ts:42-53,122-124).
+    expect(Object.keys(feed.countsBySourceKind).sort()).toEqual([
+      "agent_error_alert",
+      "approval",
+      "blocker_attention",
+      "budget_alert",
+      "failed_run",
+      "issue_thread_interaction",
+      "join_request",
+      "productivity_review",
+      "recovery_action",
+      "review",
+    ]);
+
+    const interactionItem = feed.items.find((item) => item.sourceKind === "issue_thread_interaction");
+    const interactionDedupKey = `interaction:${interactionId}`;
+    expect({
+      id: interactionItem?.id,
+      dedupKey: interactionItem?.dedupKey,
+      dismissalKey: interactionItem?.dismissalKey,
+      entryRule: interactionItem?.entryRule,
+      exitRule: interactionItem?.exitRule,
+      inlineResolvable: interactionItem?.inlineResolvable,
+      severity: interactionItem?.severity,
+      decisionVerbIds: interactionItem?.decisionVerbs.map((verb) => verb.id),
+      detailKind: interactionItem?.detail?.kind,
+    }).toEqual({
+      id: `issue_thread_interaction:${interactionDedupKey}`,
+      dedupKey: interactionDedupKey,
+      dismissalKey: `attention:${interactionDedupKey}`,
+      entryRule: "issue_thread_interactions.status = 'pending'",
+      exitRule: "Interaction resolves, expires, fails, or is cancelled.",
+      inlineResolvable: true,
+      severity: "medium",
+      decisionVerbIds: ["accept", "reject"],
+      detailKind: "confirmation",
+    });
+
+    const approvalItem = feed.items.find((item) => item.sourceKind === "approval");
+    const approvalDedupKey = `approval:${approvalId}`;
+    expect({
+      id: approvalItem?.id,
+      dedupKey: approvalItem?.dedupKey,
+      dismissalKey: approvalItem?.dismissalKey,
+      entryRule: approvalItem?.entryRule,
+      exitRule: approvalItem?.exitRule,
+      inlineResolvable: approvalItem?.inlineResolvable,
+      severity: approvalItem?.severity,
+      decisionVerbIds: approvalItem?.decisionVerbs.map((verb) => verb.id),
+      detailKind: approvalItem?.detail?.kind,
+    }).toEqual({
+      id: `approval:${approvalDedupKey}`,
+      dedupKey: approvalDedupKey,
+      dismissalKey: `attention:${approvalDedupKey}`,
+      entryRule: "approvals.status = 'pending'",
+      exitRule: "Approval leaves pending status.",
+      inlineResolvable: true,
+      severity: "medium",
+      decisionVerbIds: ["approve", "reject", "request_revision"],
+      detailKind: "approval",
+    });
+  });
+
+  it("surfaces an exhausted successful-run-handoff recovery action with its production identity", async () => {
+    const { companyId } = await seedCompany("C6");
+    const sourceIssueId = await insertIssue({
+      companyId,
+      identifier: "C6-1",
+      title: "Needs a disposition",
+      status: "blocked",
+      updatedAt: new Date("2026-07-09T12:00:00.000Z"),
+    });
+    // Seeds exactly what the production writer at recovery/service.ts:2469-2573
+    // (strandedRecoveryActionKind / strandedRecoveryActionFingerprint /
+    // ensureSourceScopedStrandedRecoveryAction) produces for a successful-run
+    // missing-disposition handoff: kind "missing_disposition", cause
+    // "successful_run_missing_state" (NOT the "missing_disposition" cause the
+    // older fixture above this one in the file uses -- that fixture predates
+    // this identity and does not match the writer), and the source-scoped
+    // fingerprint format. NOTE: the writer itself only ever sets status
+    // "active" (issue-recovery-actions.ts upsertSourceScoped, both the insert
+    // and update branches) -- nothing in server/src currently transitions an
+    // issue_recovery_actions row to "escalated" (verified: no `status:
+    // "escalated"` write exists anywhere, including
+    // escalateStrandedRecoveryIssueInPlace, which only ever sets the *issue's*
+    // status to "blocked"). "escalated" is schema-supported
+    // (issue_recovery_actions_active_source_uq / OPEN_RECOVERY_STATUSES) but
+    // currently unreached in production. This test deliberately seeds it
+    // anyway to freeze attention.ts's high-severity / board-escalated branch
+    // (attention.ts:819,831) for that row identity -- this is the C6 baseline
+    // Stage 1's canonical-dedup work must keep stable or migrate
+    // deliberately, but today it characterizes a reachable-by-schema, not
+    // reachable-by-writer, state. See task-B5-report.md for the discrepancy
+    // this raised against the task brief (which attributed status:
+    // "escalated" to the production writer).
+    const fingerprint = `source_scoped_recovery:${companyId}:${sourceIssueId}:successful_run_missing_state`;
+    await db.insert(issueRecoveryActions).values({
+      id: randomUUID(),
+      companyId,
+      sourceIssueId,
+      recoveryIssueId: null,
+      kind: "missing_disposition",
+      status: "escalated",
+      ownerType: "board",
+      ownerAgentId: null,
+      ownerUserId: null,
+      cause: "successful_run_missing_state",
+      fingerprint,
+      evidence: {},
+      nextAction: "Choose and record a valid issue disposition without copying transcript content.",
+      createdAt: new Date("2026-07-09T12:01:00.000Z"),
+      updatedAt: new Date("2026-07-09T12:01:00.000Z"),
+    });
+
+    const feed = await attentionService(db).list(companyId, { userId: "board-user" });
+    const recoveryItem = feed.items.find((item) => item.sourceKind === "recovery_action");
+    const expectedDedupKey = `recovery:missing_disposition:${sourceIssueId}:successful_run_missing_state:${fingerprint}`;
+
+    expect(recoveryItem?.dedupKey).toBe(expectedDedupKey);
+    expect(recoveryItem?.id).toBe(`recovery_action:${expectedDedupKey}`);
+    expect(recoveryItem?.dismissalKey).toBe(`attention:${expectedDedupKey}`);
+    expect(recoveryItem?.severity).toBe("high");
+    expect(recoveryItem?.subject.status).toBe("escalated");
+    expect(recoveryItem?.subject.title).toBe(
+      "Choose and record a valid issue disposition without copying transcript content.",
+    );
+    expect(recoveryItem?.subject.metadata).toEqual({
+      kind: "missing_disposition",
+      cause: "successful_run_missing_state",
+      ownerType: "board",
+      ownerUserId: null,
+      sourceIssueId,
+      recoveryIssueId: null,
+    });
+  });
 });
