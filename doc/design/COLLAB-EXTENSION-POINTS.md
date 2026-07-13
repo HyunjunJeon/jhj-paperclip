@@ -179,6 +179,8 @@ This section is the Stage 0 exit deliverable for roadmap §17 ("Success metrics 
 
 These three queries must be run against a real dogfood instance (this repo's own local instance, or a shared collab dogfood environment) **before Stage 1 starts**, and the results + capture date recorded here in place of this note. Do not fabricate numbers and do not boot a fresh empty instance to produce zeros — an empty-DB baseline is meaningless.
 
+**Owner and timing:** the board operator (jhj) captures these baselines after real dogfooding usage has accumulated on a live instance — not against a freshly booted, empty database. This capture is a Stage 1 entry gate: it must run and the results must be recorded here before Stage 1 feature code starts, per this section's existing no-fabrication / no-empty-DB-zeros posture above.
+
 ```sql
 -- 1. Median time-to-human-decision (seconds), user-resolved interactions only
 SELECT

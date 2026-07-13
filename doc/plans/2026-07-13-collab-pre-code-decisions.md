@@ -1,7 +1,7 @@
 # Human–Agent Collaboration: Pre-Code Decisions (Q1–Q16)
 
 Date: 2026-07-13  
-Status: Proposed — awaiting sign-off (Q3, Q9: product)  
+Status: Accepted (2026-07-13) — Q3/Q9 decided by product 2026-07-13; remaining 14 entries eng-ratified per roadmap  
 Closes: [`doc/plans/2026-07-12-human-agent-collaboration-roadmap.md`](2026-07-12-human-agent-collaboration-roadmap.md) §3.3, "Pre-code decisions (block Stage 1 feature work)"  
 Audience: Product, engineering
 
@@ -9,7 +9,7 @@ Audience: Product, engineering
 
 Roadmap §0 states: "Do not start Stage 1 feature code until **pre-code decisions** (§3.3) are closed." This document is that closure record. It answers all 16 items listed in roadmap §3.3, one per section below.
 
-Of the 16, review classified **9 as ratify** — the answer is already embedded in the roadmap's design constraints (§2, §3, §8–§12), and this document's job is to state that answer plainly as the canonical, citable record — and **7 as decide** — genuinely open at roadmap-authoring time, closed here by an engineering recommendation. Two of the 16 (Q3, Q9) are **product-judgment** calls rather than engineering calls; those are marked `PENDING PRODUCT DECISION` below with a recommended default and the evidence that would change it, and a decision is requested within one week. The remaining 14 are marked `PROPOSED (eng)`: engineering's proposed closure, awaiting sign-off outside this document (this session cannot ratify on the company's behalf).
+Of the 16, review classified **9 as ratify** — the answer is already embedded in the roadmap's design constraints (§2, §3, §8–§12), and this document's job is to state that answer plainly as the canonical, citable record — and **7 as decide** — genuinely open at roadmap-authoring time, closed here by an engineering recommendation. Two of the 16 (Q3, Q9) were **product-judgment** calls rather than engineering calls; those are marked `DECIDED (product, 2026-07-13)` below, with product's decided wording and the revisit trigger that would reopen it. The remaining 14 are marked `PROPOSED (eng)`: engineering's proposed closure, eng-ratified per roadmap.
 
 Nothing here overrides roadmap text. Where an entry below says a point is "ratified," that means the roadmap already settled it (see that entry's Evidence); this document is the closure record, not a new source of design truth. Roadmap §18.5's "single program source" rule still applies — if a recommendation here is later overridden, the override belongs in the roadmap, not a fork of this document.
 
@@ -17,13 +17,13 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 
 - [Q1 — Handoff source of truth](#q1--handoff-source-of-truth)
 - [Q2 — UI option to API map](#q2--ui-option-to-api-map)
-- [Q3 — Handoff required vs optional](#q3--handoff-required-vs-optional) — `PENDING PRODUCT DECISION`
+- [Q3 — Handoff required vs optional](#q3--handoff-required-vs-optional) — `DECIDED (product, 2026-07-13)`
 - [Q4 — Watchdog human reservation](#q4--watchdog-human-reservation)
 - [Q5 — Timeout actor matrix](#q5--timeout-actor-matrix)
 - [Q6 — Contract storage and evaluation order](#q6--contract-storage-and-evaluation-order)
 - [Q7 — Flag scope](#q7--flag-scope)
 - [Q8 — Steer permissions](#q8--steer-permissions)
-- [Q9 — First GA one-sentence promise](#q9--first-ga-one-sentence-promise) — `PENDING PRODUCT DECISION`
+- [Q9 — First GA one-sentence promise](#q9--first-ga-one-sentence-promise) — `DECIDED (product, 2026-07-13)`
 - [Q10 — CLI, skill, and OpenAPI policy](#q10--cli-skill-and-openapi-policy)
 - [Q11 — Decision resolver authority](#q11--decision-resolver-authority)
 - [Q12 — Failure-atomic resolve](#q12--failure-atomic-resolve)
@@ -60,15 +60,13 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 
 ## Q3 — Handoff required vs optional
 
-**Status:** PENDING PRODUCT DECISION
+**Status:** DECIDED (product, 2026-07-13)
 
-**Recommended default:** Optional at Stage 1 GA. Skills strongly recommend that agents attach a decision package when handing work to a human. The server validates a package's shape whenever one is present. The server never forces an agent to produce a package before a human-owned wait is otherwise legal — an interaction can still go pending without one.
+**Decision:** Optional at Stage 1 GA. Skills strongly recommend enrichment for human-owned waits; the server validates it only when present and never forces it as a precondition to entering a human-owned wait. Revisit trigger stays: if §17 "% human waits with decision package" stays low or time-to-decision does not improve after skill rollout, add a server-forced requirement via an executionPolicy stage precondition in a later stage.
 
-**Evidence for the default:** roadmap §8.3 ("Optional vs required: Product decision in §3.3; if optional, orphan rate is skill-dependent"); §8.7 exit ("Skill/capability rollout cannot teach disabled fields to agents").
+**Evidence:** roadmap §8.3 ("Optional vs required: Product decision in §3.3; if optional, orphan rate is skill-dependent"); §8.7 exit ("Skill/capability rollout cannot teach disabled fields to agents"); §17 success metric "% human waits with decision package enrichment" (the revisit signal, tracked after skill rollout).
 
-**Evidence that would change the default:** §17's success metric "% human waits with decision package enrichment," measured after skill rollout. If that percentage stays low once skills have had a full adoption cycle to teach the field, that is direct evidence that optional-only under-produces packages, and this default should be revisited toward required-when-flag-on (server-enforced, not just skill-recommended).
-
-**Owner:** product-judgment (engineering's recommendation stands as the default absent an override; requested decision window: one week)
+**Owner:** product (decided 2026-07-13)
 
 ---
 
@@ -134,18 +132,16 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 
 ## Q9 — First GA one-sentence promise
 
-**Status:** PENDING PRODUCT DECISION
+**Status:** DECIDED (product, 2026-07-13)
 
-**Recommended primary:** **"WhatNeedsMe shows a decision package."** The outcome checklist ("Optional contracts block done without required artifacts") and store-first steer ("Board can store-first steer without dual ownership") both still ship in the same GA stop as secondary capabilities — this is a choice of which sentence leads the release, not a scope cut.
+**Decision:** Primary promise is **"WhatNeedsMe shows a decision package."** Contracts ("Optional contracts block done without required artifacts") and store-first steer ("Board can store-first steer without dual ownership") ship as secondary capabilities in the same GA stop — this is a choice of which sentence leads the release, not a scope cut.
 
-**Evidence for the recommendation:**
+**Evidence:**
 - §6's program overview places Stage 1 (decision package) first in the dependency chain: Stage 2a/2b and Stage 3a both depend on Stage 0–1 foundations, so the decision-package capability is reachable earliest of the three candidates.
 - §5.6's E2E feasibility grades rate Stage 1 at C+ → B if built API-first, versus Stage 2 at C− → B (dual-machine risk) and Stage 3 at D until a steer store and long-run harness exist — decision-package is the safer capability to prove end-to-end first.
 - Of the §17 success metrics, the top two — "median time-to-human-decision on attention items" and "% human waits with decision package enrichment" — are both served directly by the decision-package promise, ahead of the checklist and steer metrics further down that table.
 
-**Evidence that would change the recommendation:** if product judges the outcome-checklist or store-first-steer promise to be the higher external priority despite its later dependency position and lower E2E feasibility grade — for example, a committed design partner or contractual need that specifically requires "enforced outcomes" or "steer" framing at GA — that would flip the primary. Absent such an external forcing function, the dependency-order and feasibility evidence favors the decision-package promise as primary.
-
-**Owner:** product-judgment (engineering's recommendation stands as the default absent an override; requested decision window: one week)
+**Owner:** product (decided 2026-07-13)
 
 ---
 
@@ -167,7 +163,7 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 
 **Decision:** `resolverPolicy` defaults to `{ kind: "board" }` when nothing more specific is configured. Board principals may **always** resolve regardless of the configured policy value — this is audited explicitly as a board override, consistent with the §1 hard constraint "Board governable" — while a non-default `resolverPolicy` (`responsible_user` or `typed_execution_participant`) narrows who else, besides the board, may resolve. Every other principal — former members, agents, low-trust runs, and cross-company principals — receives a non-disclosing `403` and causes no wake. If the configured responsible user is unavailable, that is handled as escalated attention by the future Stage 4b SLA evaluator, never as automatic reassignment to a different resolver.
 
-**Evidence:** roadmap §8.4 (`resolverPolicy` union shape; "Enforce `resolverPolicy` server-side. Non-owners, former members, agents, low-trust runs, and cross-company principals receive a non-disclosing `403` and cause no wake"); today's board-only guard baseline at `server/src/routes/issues.ts:3603`.
+**Evidence:** roadmap §8.4 (`resolverPolicy` union shape; "Enforce `resolverPolicy` server-side. Non-owners, former members, agents, low-trust runs, and cross-company principals receive a non-disclosing `403` and cause no wake"); today's board-only guard baseline at `server/src/routes/issues.ts:3602`.
 
 **Owner:** eng-ratify
 
@@ -239,13 +235,13 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 |---|---|---|---|---|
 | 1 | Handoff source of truth | ratify | PROPOSED (eng) | eng-ratify |
 | 2 | UI option to API map | ratify | PROPOSED (eng) | eng-ratify |
-| 3 | Handoff required vs optional | decide | PENDING PRODUCT DECISION | product-judgment |
+| 3 | Handoff required vs optional | decide | DECIDED (product, 2026-07-13) | product |
 | 4 | Watchdog human reservation | ratify | PROPOSED (eng) | eng-ratify |
 | 5 | Timeout actor matrix | decide | PROPOSED (eng) | eng-ratify |
 | 6 | Contract storage and evaluation order | decide | PROPOSED (eng) | eng-ratify |
 | 7 | Flag scope | ratify | PROPOSED (eng) | eng-ratify |
 | 8 | Steer permissions | ratify | PROPOSED (eng) | eng-ratify |
-| 9 | First GA one-sentence promise | decide | PENDING PRODUCT DECISION | product-judgment |
+| 9 | First GA one-sentence promise | decide | DECIDED (product, 2026-07-13) | product |
 | 10 | CLI, skill, and OpenAPI policy | decide | PROPOSED (eng) | eng-ratify |
 | 11 | Decision resolver authority | decide | PROPOSED (eng) | eng-ratify |
 | 12 | Failure-atomic resolve | ratify | PROPOSED (eng) | eng-ratify |
@@ -256,4 +252,4 @@ Nothing here overrides roadmap text. Where an entry below says a point is "ratif
 
 9 ratify, 7 decide (Q3, Q9, Q5, Q6, Q10, Q11, Q13) — matches the classification stated in §0.
 
-Per roadmap §0, no Stage 1 feature code starts until all 16 rows above show a closed status. As of this document's date, 14 are `PROPOSED (eng)` awaiting sign-off outside this session, and 2 (Q3, Q9) are `PENDING PRODUCT DECISION`.
+Per roadmap §0, no Stage 1 feature code starts until all 16 rows above show a closed status. As of this document's date, all 16 rows are closed: 14 are `PROPOSED (eng)`, eng-ratified per roadmap, and 2 (Q3, Q9) are `DECIDED (product, 2026-07-13)`.

@@ -584,7 +584,7 @@ export async function createInteraction(
  * New — target routes: POST /api/issues/:id/interactions/:interactionId/{accept,reject,respond}
  * (server/src/routes/issues.ts:9157, 9265, 9322). Board-only by server rule: agent actors are
  * rejected with 403 ("Agent actors cannot resolve issue-thread interactions through this
- * board-only route" — server/src/routes/issues.ts:3603, `rejectAgentIssueThreadInteractionResolution`).
+ * board-only route" — server/src/routes/issues.ts:3602, `rejectAgentIssueThreadInteractionResolution`).
  */
 export async function resolveInteraction(
   board: APIRequestContext,

@@ -89,7 +89,7 @@ test.describe("Collab harness smoke", { tag: "@collab" }, () => {
     // Stage 1 changes this deliberately: pre-code-decisions.md Q11 (decision
     // resolver authority) replaces this unconditional board-only guard with a
     // `resolverPolicy`-based check; this test freezes today's behavior
-    // (today's guard: server/src/routes/issues.ts:3603).
+    // (today's guard: server/src/routes/issues.ts:3602).
     const workerRunId = await acquireAgentRunId(ctx.boardRequest, ctx.agents.worker, { issueId: issue.id });
     const agentAcceptRes = await ctx.agents.worker.request.post(
       `${E2E_BASE_URL}/api/issues/${issue.id}/interactions/${interaction.id}/accept`,
