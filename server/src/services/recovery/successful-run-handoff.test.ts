@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_MAX_SUCCESSFUL_RUN_HANDOFF_ATTEMPTS,
   FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
   SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY,
+  SUCCESSFUL_RUN_HANDOFF_OPTIONS,
   SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY,
   SUCCESSFUL_RUN_MISSING_STATE_REASON,
   buildFinishSuccessfulRunHandoffIdempotencyKey,
   buildSuccessfulRunHandoffExhaustedNotice,
+  buildSuccessfulRunHandoffInstruction,
   buildSuccessfulRunHandoffRequiredNotice,
   decideSuccessfulRunHandoff,
   isIdempotentFinishSuccessfulRunHandoffWakeStatus,
@@ -365,5 +368,56 @@ describe("successful run handoff decision", () => {
     expect(isSuccessfulRunHandoffRequiredNoticeBody("## Successful run missing issue disposition\n\nold body")).toBe(true);
     expect(isSuccessfulRunHandoffRequiredNoticeBody("## This issue still needs a next step\n\nold body")).toBe(true);
     expect(isSuccessfulRunHandoffRequiredNoticeBody("Unrelated comment")).toBe(false);
+  });
+
+  // Contract-shape freeze (task B5, C6 baseline): the "does not queue when a
+  // successful run records an accepted next-action path" test above already
+  // checks the pending-interaction-or-approval skip with toEqual; this test
+  // repeats that assertion as its own named freeze (this exact coexistence
+  // rule -- a pending interaction/approval owns the next action over a
+  // successful-run-handoff wake -- is the behavior C6's collab work must not
+  // silently change) and additionally locks the *enqueue* branch's full
+  // payload shape with an exhaustive toEqual, including the taskKey spread
+  // (successful-run-handoff.ts:420) and the four model-profile hint keys
+  // (model-profile-hint.ts:5-10), so any new/removed/renamed payload field
+  // fails loudly instead of only being caught by the looser toMatchObject
+  // checks in the first test in this file.
+  it("freezes the coexistence skip contract for pending interactions and approvals", () => {
+    expect(decide({ hasPendingInteractionOrApproval: true })).toEqual({
+      kind: "skip",
+      reason: "pending interaction or approval owns the next action",
+    });
+
+    const decision = decide();
+    expect(decision.kind).toBe("enqueue");
+    if (decision.kind !== "enqueue") return;
+
+    expect(decision.idempotencyKey).toBe(`finish_successful_run_handoff:${issue.id}:${run.id}:1`);
+    expect(decision.payload).toEqual({
+      issueId: issue.id,
+      taskId: issue.id,
+      sourceIssueId: issue.id,
+      sourceRunId: run.id,
+      handoffRequired: true,
+      handoffReason: SUCCESSFUL_RUN_MISSING_STATE_REASON,
+      missingDisposition: "clear_next_step",
+      validDispositionOptions: [...SUCCESSFUL_RUN_HANDOFF_OPTIONS],
+      detectedProgressSummary: "Run produced concrete action evidence: 1 issue comment(s)",
+      handoffAttempt: 1,
+      maxHandoffAttempts: DEFAULT_MAX_SUCCESSFUL_RUN_HANDOFF_ATTEMPTS,
+      resumeIntent: true,
+      followUpRequested: true,
+      resumeFromRunId: run.id,
+      taskKey: "issue-1",
+      instruction: buildSuccessfulRunHandoffInstruction({
+        issueIdentifier: issue.identifier,
+        sourceRunId: run.id,
+      }),
+      recoveryIntent: "status_only",
+      allowDeliverableWork: false,
+      allowDocumentUpdates: false,
+      resumeRequiresNormalModel: true,
+      modelProfile: "cheap",
+    });
   });
 });
