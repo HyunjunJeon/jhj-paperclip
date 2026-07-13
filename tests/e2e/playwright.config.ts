@@ -65,6 +65,10 @@ export default defineConfig({
       PAPERCLIP_BIND: "loopback",
       PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private",
+      // Local e2e runs are not opted out of telemetry by default: the CI-only
+      // opt-out env vars don't apply here, and the server defaults telemetry
+      // on (server/src/config.ts:335). Disable it for this throwaway instance.
+      PAPERCLIP_TELEMETRY_DISABLED: "1",
     },
   },
   outputDir: "./test-results",

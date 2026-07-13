@@ -150,3 +150,68 @@ This rule is now also enforced procedurally: roadmap §14's per-stage Definition
 ```
 
 If a future change needs to violate one of the "never" rules above (a new resolve verb, a second outbox, a timeout actor outside §7's table), that is by definition not an extension — it is a redesign, and belongs in a roadmap amendment, not a quiet drift in this file. Roadmap §18, item 5 states the governing rule: "Treat this document as the single program source; update it when decisions land (do not fork parallel “version” docs)."
+
+## 12. Metrics source map
+
+This section is the Stage 0 exit deliverable for roadmap §17 ("Success metrics (after Stage 1–2 ship)"): for each §17 metric, where its data comes from today, which stage is responsible for making it real, and the pre-Stage-1 baseline. There is **no telemetry codegen command** — `packages/shared/src/telemetry/generated/paperclip-telemetry.ts` is a vendored canonical contract (commit `8a93a0de`); changes to it are hand-edits coordinated with the upstream generator owner, per `packages/shared/src/telemetry/README.md` §"Adding Or Changing Telemetry". Any Stage 1–5 change to the contract or its emitters follows that procedure, not a local codegen step.
+
+| §17 metric | Source | Stage | Pre-Stage-1 baseline |
+|---|---|---|---|
+| Median time-to-human-decision on attention items | Extend `interaction.resolved` emission with the **already-contract-approved but unemitted** `resolution_latency_seconds` dimension (`PaperclipInteractionResolvedDimensions.resolution_latency_seconds`, `generated/paperclip-telemetry.ts:58`) — compute from `resolvedAt − createdAt` inside `emitInteractionResolvedTelemetry` (`server/src/services/issue-thread-interactions.ts:429`); the three batch call sites at lines 1632, 1772, and 1844 (`emitResolvedInteractionsTelemetry` fan-out) inherit the same computation. Local SQL: `percentile_cont(0.5)` over `resolved_at − created_at` where `resolved_by_user_id IS NOT NULL` | Stage 0 defines; Stage 1 emits | Run the local SQL on dogfood instances; record in Stage 0 exit notes |
+| % human waits with decision package enrichment | New dim `has_decision_package?: boolean` on `interaction.resolved` (contract edit). Denominator: `created_by_kind="agent" AND resolved_by_kind="user"` | Stage 1 | Denominator volume (already emitted); numerator 0% by construction |
+| % checklist issues terminal with required artifacts | New event `issue.checklist_completed` (no terminal-transition event exists today). Local join `issues.status='done'` × `issue_work_products` | Stage 2a | Local proxy: share of done issues with ≥1 work product |
+| Orphaned waits (no action-path primitive) | **Local DB query only** (server liveness definition): pending interactions older than 24h, refined by the R1 action-path predicate (the `in_review_without_action_path` liveness state computed by `server/src/services/recovery/issue-graph-liveness.ts`) | Stage 0 defines predicate | Run pre-Stage-1; record count + age distribution |
+| Steer events that avoid full run cancel | New event `steer.applied` (`consumed_by`, `run_cancelled`, `coalesced`) | Stage 3a | None (feature absent) |
+| Board-governed auto-approvals via automation | **Not telemetry** — server invariant tests (B3) + local audit query | Stage 0, every stage | Run now; expected 0 (permanent target) |
+| Human questions per completed issue | Numerator exists (`interaction_kind="ask_user_questions"`); denominator local ratio vs `issues.status='done'` | Stage 4a | Compute local ratio pre-Stage-1 |
+
+**Stage 1 rider:** start emitting the already-approved-but-unemitted `has_reason`, `interaction_id`, `created_by_agent_id`, and `source_run_id` dimensions on `interaction.resolved` (all present in `PaperclipInteractionResolvedDimensions`, `generated/paperclip-telemetry.ts:42–62`, none currently populated by `emitInteractionResolvedTelemetry` or passed through `trackInteractionResolved`, `packages/shared/src/telemetry/events.ts:132–167`). Also add `request_item_verdicts` support plus `item_count`/`resolved_item_count` to the contract: these two counts are already **computed today** in `buildInteractionResolvedCounts`'s `request_item_verdicts` case (`server/src/services/issue-thread-interactions.ts:399–403`, within the function spanning 380–407) but are **silently dropped** — `trackInteractionResolved` (`packages/shared/src/telemetry/events.ts:132–167`) has no `itemCount`/`resolvedItemCount` parameters and never forwards them to `client.track`, and `request_item_verdicts` is not yet a member of `PaperclipInteractionResolvedDimensions.interaction_kind`'s enum. Landing this is a contract edit (adding the enum member and the two dimensions) plus wiring the already-computed values through the typed helper — not new computation.
+
+**Drift note (verified against `HEAD` while writing this section):** the source citation for the "computed today, silently dropped" claim is `server/src/services/issue-thread-interactions.ts:380–407` (the `buildInteractionResolvedCounts` function), not `events.ts:380–403` — `events.ts` is 168 lines total and has no content at that range. The substantive claim is correct (verified by reading both files); only the file name in the original citation was stale. This note exists per §11's change-control posture: fix drift in place, do not silently carry forward a wrong anchor.
+
+**Baseline capture (pending).** The three SQL baselines below (latency median, orphaned-wait count, questions-per-completed-issue ratio) require a running local Paperclip instance's Postgres. As of this writing (2026-07-13), no reachable instance was found from this workspace:
+
+- `lsof -iTCP:3199` — no listener.
+- `ps aux | grep paperclip` — no running server process.
+- `~/.paperclip/instances/default` exists with a populated embedded-Postgres data directory (`db/`, real `projects/`/`workspaces/` content) and a recent `logs/server.log`, but its last log lines show it belongs to a **different, sibling checkout** (`/Users/jhj/Desktop/personal/jhj-paperclip-composition`, not this repo) and it is **not currently running** (no listener on port 3199 or the embedded-Postgres port 54329). Per this task's constraint, an unreachable instance is not started just to produce a baseline — starting embedded Postgres against someone else's checkout's data directory for a docs task is out of scope here, and the data would not represent this repo's collab surface in any case.
+- No `DATABASE_URL`/external Postgres reachable from `server/src/config.ts`'s resolution order was found configured for this workspace (only an unrelated Docker Postgres on `:5432` for a different project, `meta-ontology-service-postgres`).
+
+These three queries must be run against a real dogfood instance (this repo's own local instance, or a shared collab dogfood environment) **before Stage 1 starts**, and the results + capture date recorded here in place of this note. Do not fabricate numbers and do not boot a fresh empty instance to produce zeros — an empty-DB baseline is meaningless.
+
+```sql
+-- 1. Median time-to-human-decision (seconds), user-resolved interactions only
+SELECT
+  percentile_cont(0.5) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (resolved_at - created_at))
+  ) AS median_resolution_latency_seconds,
+  count(*) AS resolved_by_user_count
+FROM issue_thread_interactions
+WHERE resolved_by_user_id IS NOT NULL
+  AND resolved_at IS NOT NULL;
+
+-- 2. Orphaned waits: pending interactions older than 24h (raw upper bound;
+--    NOT yet refined by the R1 action-path predicate, which requires the
+--    application-level issue-graph-liveness classification, not SQL alone —
+--    see server/src/services/recovery/issue-graph-liveness.ts)
+SELECT
+  count(*) AS orphaned_pending_count,
+  percentile_cont(0.5) WITHIN GROUP (
+    ORDER BY EXTRACT(EPOCH FROM (now() - created_at)) / 3600.0
+  ) AS median_age_hours,
+  min(created_at) AS oldest_created_at,
+  max(created_at) AS newest_created_at
+FROM issue_thread_interactions
+WHERE status = 'pending'
+  AND created_at < now() - interval '24 hours';
+
+-- 3. Human questions per completed issue (local ratio)
+SELECT
+  (SELECT count(*) FROM issue_thread_interactions WHERE kind = 'ask_user_questions')
+    AS ask_user_questions_count,
+  (SELECT count(*) FROM issues WHERE status = 'done') AS done_issue_count,
+  CASE
+    WHEN (SELECT count(*) FROM issues WHERE status = 'done') = 0 THEN NULL
+    ELSE (SELECT count(*) FROM issue_thread_interactions WHERE kind = 'ask_user_questions')::numeric
+      / (SELECT count(*) FROM issues WHERE status = 'done')
+  END AS questions_per_completed_issue;
+```
