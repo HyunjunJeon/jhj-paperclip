@@ -123,7 +123,7 @@ Resolving a human wait is failure-atomic (decisions-record Q12, ratifying Track 
 
 ## 10. Live-events WS channel rules
 
-The live-events WebSocket endpoint is `server/src/realtime/live-events-ws.ts:86` (`^/api/companies/([^/]+)/events/ws$`, company-scoped by construction). It carries exactly the 11 event types in the closed `LIVE_EVENT_TYPES` union, `packages/shared/src/constants.ts:793–806`:
+The live-events WebSocket endpoint is `server/src/realtime/live-events-ws.ts:86` (`^/api/companies/([^/]+)/events/ws$`, company-scoped by construction). It carries exactly the 11 event types in the closed `LIVE_EVENT_TYPES` union, `packages/shared/src/constants.ts:793–805`:
 
 `heartbeat.run.queued`, `heartbeat.run.status`, `heartbeat.run.progress`, `heartbeat.run.event`, `heartbeat.run.log`, `agent.status`, `activity.logged`, `external_object.updated`, `plugin.ui.updated`, `plugin.worker.crashed`, `plugin.worker.restarted`.
 
@@ -149,4 +149,4 @@ This rule is now also enforced procedurally: roadmap §14's per-stage Definition
 - [ ] COLLAB-EXTENSION-POINTS.md updated in the same PR when a schema field, wake reason, dedupKey family, or event type is added
 ```
 
-If a future change needs to violate one of the "never" rules above (a new resolve verb, a second outbox, a timeout actor outside §7's table), that is by definition not an extension — it is a redesign, and belongs in a roadmap amendment (roadmap §18.5: "single program source... the override belongs in the roadmap, not a fork of this document"), not a quiet drift in this file.
+If a future change needs to violate one of the "never" rules above (a new resolve verb, a second outbox, a timeout actor outside §7's table), that is by definition not an extension — it is a redesign, and belongs in a roadmap amendment, not a quiet drift in this file. Roadmap §18, item 5 states the governing rule: "Treat this document as the single program source; update it when decisions land (do not fork parallel “version” docs)."
